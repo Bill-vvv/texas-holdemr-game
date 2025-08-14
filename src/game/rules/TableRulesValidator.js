@@ -29,8 +29,8 @@ class TableRulesValidator {
       throw new Error('Maximum players must be greater than or equal to minimum players');
     }
     
-    if (maxPlayers > 9) {
-      throw new Error('Maximum players cannot exceed 9 for Texas Hold\'em');
+    if (maxPlayers > 8) {
+      throw new Error('Maximum players cannot exceed 8 for Texas Hold\'em');
     }
   }
 

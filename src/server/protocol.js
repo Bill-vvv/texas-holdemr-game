@@ -5,6 +5,9 @@
 
 // 客户端到服务端的消息类型
 export const CLIENT_MESSAGES = {
+  // 阶段2新增：会话管理
+  HELLO: 'hello',
+  
   // 玩家连接相关
   JOIN_GAME: 'join_game',
   LEAVE_GAME: 'leave_game',
@@ -16,6 +19,12 @@ export const CLIENT_MESSAGES = {
   // 游戏动作
   PLAYER_ACTION: 'player_action',
   
+  // 阶段2新增：生命周期操作
+  TAKE_SEAT: 'take_seat',
+  LEAVE_SEAT: 'leave_seat',
+  LEAVE_TABLE: 'leave_table',
+  ADD_ON: 'add_on',
+  
   // 状态查询
   REQUEST_GAME_STATE: 'request_game_state'
 };
@@ -25,6 +34,7 @@ export const SERVER_MESSAGES = {
   // 连接状态
   CONNECTION_SUCCESS: 'connection_success',
   CONNECTION_ERROR: 'connection_error',
+  SESSION_ACCEPTED: 'session_accepted',  // 阶段2新增：会话确认
   
   // 游戏状态
   GAME_STATE: 'game_state',
@@ -78,7 +88,18 @@ export const ERROR_TYPES = {
   NOT_ROOM_HOST: 'not_room_host',
   SESSION_NOT_INITIALIZED: 'session_not_initialized',  // 阶段1.5新增：会话未初始化
   GAME_ERROR: 'game_error',
-  SYSTEM_ERROR: 'system_error'
+  SYSTEM_ERROR: 'system_error',
+  
+  // 阶段2新增：生命周期错误类型
+  ONLY_IN_WAITING_STATE: 'only_in_waiting_state',
+  SEAT_TAKEN: 'seat_taken',
+  BUYIN_OUT_OF_RANGE: 'buyin_out_of_range',
+  ADDON_OVER_MAX: 'addon_over_max',
+  PLAYER_NOT_SEATED: 'player_not_seated',
+  ALREADY_SEATED: 'already_seated',
+  NO_SEATS_AVAILABLE: 'no_seats_available',
+  INVALID_SESSION_TOKEN: 'invalid_session_token',
+  SESSION_EXPIRED: 'session_expired'
 };
 
 /**
@@ -122,6 +143,41 @@ export function validateClientMessage(message) {
   if (message.type === CLIENT_MESSAGES.HOST_END_GAME) {
     // HOST_END_GAME消息不需要额外参数验证
     // 房主权限由服务端处理
+  }
+
+  // 阶段2新增：验证HELLO消息
+  if (message.type === CLIENT_MESSAGES.HELLO) {
+    // sessionToken是可选的，可以为空
+    const { sessionToken } = message.payload || {};
+    if (sessionToken && typeof sessionToken !== 'string') {
+      return { error: ERROR_TYPES.INVALID_SESSION_TOKEN, message: '会话令牌格式无效' };
+    }
+  }
+
+  // 阶段2新增：验证TAKE_SEAT消息
+  if (message.type === CLIENT_MESSAGES.TAKE_SEAT) {
+    const { buyIn } = message.payload || {};
+    if (typeof buyIn !== 'number' || buyIn <= 0) {
+      return { error: ERROR_TYPES.SYSTEM_ERROR, message: 'TAKE_SEAT消息缺少必要参数: buyIn' };
+    }
+  }
+
+  // 阶段2新增：验证LEAVE_SEAT消息
+  if (message.type === CLIENT_MESSAGES.LEAVE_SEAT) {
+    // LEAVE_SEAT消息不需要额外参数
+  }
+
+  // 阶段2新增：验证LEAVE_TABLE消息
+  if (message.type === CLIENT_MESSAGES.LEAVE_TABLE) {
+    // LEAVE_TABLE消息不需要额外参数
+  }
+
+  // 阶段2新增：验证ADD_ON消息
+  if (message.type === CLIENT_MESSAGES.ADD_ON) {
+    const { amount } = message.payload || {};
+    if (!amount || typeof amount !== 'number' || amount <= 0) {
+      return { error: ERROR_TYPES.INVALID_AMOUNT, message: '增购金额必须为正数' };
+    }
   }
 
   return null; // 验证通过

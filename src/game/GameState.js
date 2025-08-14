@@ -20,6 +20,9 @@ class GameState {
     this.street = 'PRE_FLOP'; // PRE_FLOP, FLOP, TURN, RIVER, SHOWDOWN
     this.phase = 'WAITING';   // WAITING, PLAYING, FINISHED
     
+    // 阶段2新增：桌面级生命周期状态
+    this.tableStatus = 'WAITING'; // WAITING, HAND_IN_PROGRESS, SETTLING
+    
     // 玩家信息
     this.players = [];        // [{id, name, chips, holeCards, position, status}]
     this.buttonIndex = 0;     // 庄家按钮位置索引
@@ -53,10 +56,10 @@ class GameState {
 
   /**
    * 添加玩家
-   * @param {Object} player {id, name, chips}
+   * @param {Object} player {id, name, chips, status?, position?}
    */
   addPlayer(player) {
-    if (!player || !player.id || typeof player.chips !== 'number') {
+    if (!player || !player.id) {
       throw new Error('Invalid player data');
     }
     
@@ -68,10 +71,10 @@ class GameState {
     const newPlayer = {
       id: player.id,
       name: player.name || player.id,
-      chips: player.chips,
+      chips: player.chips || 0,
       holeCards: [],           // 手牌
-      position: this.players.length, // 座位位置
-      status: 'ACTIVE',        // ACTIVE, FOLDED, ALL_IN, SITTING_OUT
+      position: player.position !== undefined ? player.position : this.players.length, // 座位位置
+      status: player.status || 'ACTIVE',        // ACTIVE, FOLDED, ALL_IN, SITTING_OUT
       currentBet: 0,          // 本街已下注金额
       totalBet: 0,            // 本轮总下注金额
       isDealer: false,        // 是否是庄家
@@ -135,6 +138,7 @@ class GameState {
       gameId: this.gameId,
       street: this.street,
       phase: this.phase,
+      tableStatus: this.tableStatus, // 阶段2新增：桌面级状态
       players: this.players.map(p => ({
         id: p.id,
         name: p.name,
@@ -185,7 +189,8 @@ class GameState {
    * @returns {boolean}
    */
   canStart() {
-    return this.players.length >= 2 && this.players.length <= 3 && this.phase === 'WAITING';
+    const eligibleCount = this.players.filter(p => p.status !== 'SITTING_OUT').length;
+    return eligibleCount >= 2 && this.players.length <= 8 && this.phase === 'WAITING';
   }
 
   /**
@@ -241,6 +246,28 @@ class GameState {
       handId: this.handNumber,
       winners: winners
     };
+  }
+
+  // 阶段2新增方法
+
+  /**
+   * 设置桌面状态
+   * @param {string} status WAITING, HAND_IN_PROGRESS, SETTLING
+   */
+  setTableStatus(status) {
+    const validStatuses = ['WAITING', 'HAND_IN_PROGRESS', 'SETTLING'];
+    if (!validStatuses.includes(status)) {
+      throw new Error(`Invalid table status: ${status}`);
+    }
+    this.tableStatus = status;
+  }
+
+  /**
+   * 检查是否在等待状态（用于生命周期守卫）
+   * @returns {boolean}
+   */
+  isInWaitingState() {
+    return this.tableStatus === 'WAITING' && this.phase === 'WAITING';
   }
 }
 

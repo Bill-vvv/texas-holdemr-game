@@ -46,12 +46,13 @@ class Lifecycle {
         return this._createError('PLAYER_ALREADY_EXISTS', '玩家已存在');
       }
 
-      // 加入桌面（观察者模式，无需分配座位）
+      // 加入桌面（观察者模式，无需分配座位，position=null 表示未入座）
       gameState.addPlayer({
         id: playerId,
         name: nickname,
         chips: 0, // 观察者状态，未买入
-        status: 'SITTING_OUT'
+        status: 'SITTING_OUT',
+        position: null
       });
 
       return { success: true };

@@ -11,7 +11,7 @@ describe('TableRules', () => {
     const rules = new TableRules();
     
     assert.strictEqual(rules.minPlayers, 2);
-    assert.strictEqual(rules.maxPlayers, 3);
+    assert.strictEqual(rules.maxPlayers, 8);
     assert.strictEqual(rules.smallBlind, 10);
     assert.strictEqual(rules.bigBlind, 20);
     assert.strictEqual(rules.minRaise, 20);

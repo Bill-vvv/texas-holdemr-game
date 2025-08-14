@@ -15,7 +15,7 @@ import jwt from 'jsonwebtoken';
 // JWT密钥，生产环境应从环境变量获取
 const JWT_SECRET = process.env.JWT_SECRET || 'poker-game-secret-key-2024';
 const JWT_EXPIRES_IN = '24h';
-const GRACE_PERIOD_MS = 60 * 1000; // 60秒宽限期
+const GRACE_PERIOD_MS = 5 * 60 * 1000; // 5分钟宽限期
 
 class Session {
   constructor() {

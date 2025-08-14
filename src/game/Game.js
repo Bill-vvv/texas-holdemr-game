@@ -41,6 +41,11 @@ export default class Game {
         throw new Error('游戏已开始，无法添加玩家');
       }
 
+      // 达到人数上限时不可加入（只检查上限，不检查最少人数）
+      if (this.gameState.players.length >= this.tableRules.maxPlayers) {
+        throw new Error('玩家人数已达上限');
+      }
+
       if (!this.tableRules.isValidBuyIn(playerData.chips)) {
         throw new Error('买入金额不符合规则要求');
       }
@@ -64,6 +69,11 @@ export default class Game {
         const player = this.gameState.getPlayer(playerId);
         if (player) {
           player.status = 'SITTING_OUT';
+          // 清理位置与本街下注标记，避免UI残留
+          player.isDealer = false;
+          player.isSmallBlind = false;
+          player.isBigBlind = false;
+          player.currentBet = 0;
           this.gameState.updateActivePlayers();
         }
       } else {
@@ -84,6 +94,9 @@ export default class Game {
       if (!this.gameState.canStart()) {
         throw new Error('玩家数量不足，无法开始游戏');
       }
+
+      // 阶段2新增：手局开始钩子 - 设置桌面状态为进行中
+      this._onHandStart();
 
       // 阶段1.5：初始化会话基线（第一手牌时）
       if (this.gameState.handNumber === 0) {
@@ -127,6 +140,7 @@ export default class Game {
 
       return true;
     } catch (error) {
+      console.error('startNewHand错误:', error.message);
       return false;
     }
   }
@@ -281,6 +295,9 @@ export default class Game {
     this.gameState.currentTurn = null;
     this.pots = [];
 
+    // 阶段2新增：手局结束钩子 - 设置桌面状态回到等待
+    this._onHandEnd();
+
     events.push({ type: 'HAND_FINISHED', handNumber: this.gameState.handNumber });
   }
 
@@ -378,6 +395,9 @@ export default class Game {
       return null; // 会话未初始化
     }
 
+    // 修复：在结算前先处理筹码返还，避免筹码丢失
+    this._refundChipsOnGameEnd();
+
     const finalSettlement = {
       sessionId: this.gameState.session.id,
       startedAt: this.gameState.session.startedAt,
@@ -409,5 +429,89 @@ export default class Game {
     this.gameState.session.endedAt = Date.now();
 
     return finalSettlement;
+  }
+
+  /**
+   * 游戏强制结束时的筹码返还处理
+   * 返还所有currentBet和按比例分配彩池，确保公平结算
+   * @private
+   */
+  _refundChipsOnGameEnd() {
+    // 1. 返还所有玩家的currentBet（本街已下注筹码）
+    this.gameState.players.forEach(player => {
+      player.chips += player.currentBet;
+      player.currentBet = 0;
+    });
+
+    // 2. 计算所有彩池的总金额
+    const totalPotsAmount = this.pots.reduce((sum, pot) => sum + pot.amount, 0);
+    
+    if (totalPotsAmount > 0) {
+      // 3. 按损失比例返还彩池筹码
+      // 计算每个玩家的损失（baseline - current chips）
+      const playerLosses = this.gameState.players.map(player => {
+        const baseline = this.gameState.session.baselineStacks[player.id] || 0;
+        const loss = Math.max(0, baseline - player.chips);
+        return {
+          playerId: player.id,
+          loss: loss
+        };
+      }).filter(p => p.loss > 0);
+
+      const totalLoss = playerLosses.reduce((sum, p) => sum + p.loss, 0);
+      
+      if (totalLoss > 0) {
+        // 按损失比例分配彩池筹码
+        playerLosses.forEach(({playerId, loss}) => {
+          const proportion = loss / totalLoss;
+          const refund = Math.floor(totalPotsAmount * proportion);
+          const player = this.gameState.getPlayer(playerId);
+          if (player) {
+            player.chips += refund;
+          }
+        });
+
+        // 处理余数：剩余筹码给损失最大的玩家
+        const refundedAmount = playerLosses.reduce((sum, {playerId, loss}) => {
+          const proportion = loss / totalLoss;
+          return sum + Math.floor(totalPotsAmount * proportion);
+        }, 0);
+        
+        const remainder = totalPotsAmount - refundedAmount;
+        if (remainder > 0 && playerLosses.length > 0) {
+          // 将余数给损失最大的玩家
+          const maxLossPlayer = playerLosses.reduce((max, current) => 
+            current.loss > max.loss ? current : max
+          );
+          const player = this.gameState.getPlayer(maxLossPlayer.playerId);
+          if (player) {
+            player.chips += remainder;
+          }
+        }
+      }
+    }
+
+    // 4. 清空彩池，避免重复处理
+    this.pots = [];
+  }
+
+  // 阶段2新增方法：手局边界钩子
+
+  /**
+   * 手局开始钩子
+   * @private
+   */
+  _onHandStart() {
+    // 设置桌面状态为手局进行中
+    this.gameState.setTableStatus('HAND_IN_PROGRESS');
+  }
+
+  /**
+   * 手局结束钩子
+   * @private
+   */
+  _onHandEnd() {
+    // 设置桌面状态回到等待状态
+    this.gameState.setTableStatus('WAITING');
   }
 }

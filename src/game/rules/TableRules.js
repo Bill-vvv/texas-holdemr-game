@@ -14,7 +14,7 @@ class TableRules {
   constructor(options = {}) {
     // 基本桌面配置
     this.minPlayers = options.minPlayers || 2;
-    this.maxPlayers = options.maxPlayers || 3; // MVP阶段限制最多3人
+    this.maxPlayers = options.maxPlayers || 8; // 调整默认上限为8人
     
     // 盲注配置
     this.smallBlind = options.smallBlind || 10;

@@ -8,13 +8,17 @@ import { Server } from 'socket.io';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 // 游戏模块
 import Game from '../game/Game.js';
+import TurnManager from '../game/TurnManager.js';
 import TableRules from '../game/rules/TableRules.js';
 
 // 服务器模块
 import PlayerRegistry from './playerRegistry.js';
+import Session from './session.js';
+import Lifecycle from './lifecycle.js';
 import {
   CLIENT_MESSAGES,
   SERVER_MESSAGES,
@@ -33,6 +37,15 @@ class PokerServer {
   constructor(port = 3000) {
     this.port = port;
     this.playerRegistry = new PlayerRegistry();
+    this.session = new Session();  // 阶段2新增：会话管理
+    this.lifecycle = new Lifecycle();  // 阶段2新增：生命周期管理
+    this.socketToSession = new Map();
+    
+    // 回合计时器（1分钟决策超时）
+    this.TURN_TIMEOUT_MS = 60 * 1000;
+    this.turnTimer = null;
+    this.turnPlayerId = null;
+    this.turnDeadlineAt = null;
     
     // 初始化游戏
     const tableRules = TableRules.createCashGame(20); // 10/20 盲注
@@ -40,6 +53,11 @@ class PokerServer {
     
     this.setupServer();
     this.setupSocketHandlers();
+
+    // 开发模式：启用前端资源热刷新
+    if (process.env.NODE_ENV !== 'production') {
+      this.enableDevReload();
+    }
   }
 
   /**
@@ -89,9 +107,44 @@ class PokerServer {
       // 处理断开连接
       socket.on('disconnect', () => {
         console.log(`连接断开: ${socket.id}`);
-        this.handlePlayerLeave(socket.id);
+        this.handlePlayerDisconnect(socket.id);  // 阶段2修改：支持断线重连
       });
     });
+  }
+
+  /**
+   * 开发模式：监听静态资源变化并通知客户端刷新
+   */
+  enableDevReload() {
+    try {
+      const publicDir = path.join(__dirname, '../ui/public');
+      let reloadTimer = null;
+
+      const scheduleReload = () => {
+        if (reloadTimer) return;
+        reloadTimer = setTimeout(() => {
+          reloadTimer = null;
+          try {
+            this.io.emit('reload');
+            console.log('检测到前端资源变更，已通知客户端刷新');
+          } catch (e) {
+            // 忽略发送失败
+          }
+        }, 200);
+      };
+
+      // Windows/macOS 支持 recursive 递归监听
+      fs.watch(publicDir, { recursive: true }, (eventType, filename) => {
+        if (!filename) return;
+        // 忽略 sourcemap 等无关文件
+        if (filename.endsWith('.map')) return;
+        scheduleReload();
+      });
+
+      console.log('开发模式：已开启静态目录热刷新监听');
+    } catch (err) {
+      console.warn('启用前端热刷新失败（非致命）：', err && err.message ? err.message : err);
+    }
   }
 
   /**
@@ -108,6 +161,10 @@ class PokerServer {
 
       // 根据消息类型分发处理
       switch (message.type) {
+        case CLIENT_MESSAGES.HELLO:  // 阶段2新增：握手与会话
+          this.handleHello(socket, message.payload);
+          break;
+
         case CLIENT_MESSAGES.JOIN_GAME:
           this.handlePlayerJoin(socket, message.payload);
           break;
@@ -130,6 +187,23 @@ class PokerServer {
 
         case CLIENT_MESSAGES.HOST_END_GAME:  // 阶段1.5新增
           this.handleHostEndGame(socket);
+          break;
+
+        // 阶段2新增：生命周期消息
+        case CLIENT_MESSAGES.TAKE_SEAT:
+          this.handleTakeSeat(socket, message.payload);
+          break;
+
+        case CLIENT_MESSAGES.LEAVE_SEAT:
+          this.handleLeaveSeat(socket, message.payload);
+          break;
+
+        case CLIENT_MESSAGES.LEAVE_TABLE:
+          this.handleLeaveTable(socket, message.payload);
+          break;
+
+        case CLIENT_MESSAGES.ADD_ON:
+          this.handleAddOn(socket, message.payload);
           break;
 
         default:
@@ -163,15 +237,46 @@ class PokerServer {
       return;
     }
 
-    // 尝试将玩家添加到游戏中
-    const gameResult = this.game.addPlayer(registrationResult.playerData);
-    
-    if (!gameResult) {
-      // 游戏添加失败，清理注册
+    // 加入桌面前：去重同名的"僵尸观察者"（离线且过宽限且0筹码且坐出）
+    try {
+      const staleIds = (this.game.gameState.players || [])
+        .filter(p => p.name === playerName && p.id !== registrationResult.playerId)
+        .filter(p => !this.playerRegistry.isPlayerOnline(p.id))
+        .filter(p => !this.session.isWithinGrace(p.id))
+        .filter(p => p.status === 'SITTING_OUT' && (p.chips || 0) === 0)
+        .map(p => p.id);
+      if (staleIds.length > 0) {
+        staleIds.forEach(pid => this.game.gameState.removePlayer(pid));
+      }
+    } catch { /* ignore */ }
+
+    // 高优先：绑定会话到玩家（用于后续宽限与重连）
+    try {
+      const sid = this.socketToSession.get(socket.id);
+      if (sid) {
+        this.session.bindSessionToPlayer(sid, registrationResult.playerId, socket.id);
+      } else {
+        const ensured = this.session.ensureSession();
+        this.session.bindSessionToPlayer(ensured.sessionId, registrationResult.playerId, socket.id);
+        this.socketToSession.set(socket.id, ensured.sessionId);
+      }
+    } catch (e) {
+      console.warn('绑定会话到玩家失败（将继续流程）:', e && e.message ? e.message : e);
+    }
+
+    // 阶段2：使用生命周期加入桌面为“旁观者/坐出”，不直接入座
+    const joinResult = this.lifecycle.handleJoinTable({
+      gameState: this.game.gameState,
+      playerId: registrationResult.playerId,
+      nickname: playerName
+    });
+
+    if (!joinResult.success) {
+      // 加入失败，清理注册
       this.playerRegistry.unregisterPlayer(socket.id);
       socket.emit('message', createErrorMessage(
-        ERROR_TYPES.GAME_ERROR,
-        '无法加入游戏，请稍后重试'
+        joinResult.error.code || ERROR_TYPES.GAME_ERROR,
+        joinResult.error.message || '无法加入游戏，请稍后重试'
       ));
       return;
     }
@@ -244,6 +349,29 @@ class PokerServer {
       );
 
       console.log(`游戏事件: ${event.type}`, event);
+
+      // 回合计时器控制与局间清理
+      if (event.type === 'TURN_CHANGED') {
+        this._cancelTurnTimer();
+        if (event.playerId) {
+          this._startTurnTimerFor(event.playerId);
+        }
+      }
+
+      if (event.type === 'HAND_FINISHED' || event.type === 'GAME_ENDED' || event.type === 'SHOWDOWN_STARTED') {
+        this._cancelTurnTimer();
+      }
+
+      // 局间：自动移除断线者（不解绑会话，保留重连为未入座）
+      if (event.type === 'HAND_FINISHED' || event.type === 'GAME_ENDED') {
+        const disconnectedIds = this.game.gameState.players
+          .map(p => p.id)
+          .filter(pid => this.playerRegistry.isPlayerDisconnected(pid));
+        if (disconnectedIds.length > 0) {
+          disconnectedIds.forEach(pid => this.game.removePlayer(pid));
+          this.broadcastGameState();
+        }
+      }
     });
   }
 
@@ -348,8 +476,16 @@ class PokerServer {
   startGame() {
     const gameState = this.game.getPublicState();
     
+    console.log('startGame调试信息:');
+    console.log('- phase:', gameState.phase);
+    console.log('- players.length:', gameState.players.length);
+    console.log('- 条件检查: phase === WAITING:', gameState.phase === 'WAITING');
+    console.log('- 条件检查: players.length >= 2:', gameState.players.length >= 2);
+    
     if (gameState.phase === 'WAITING' && gameState.players.length >= 2) {
+      console.log('尝试调用startNewHand...');
       const startResult = this.game.startNewHand();
+      console.log('startNewHand返回:', startResult);
       
       if (startResult) {
         console.log('新一轮游戏开始！');
@@ -361,10 +497,341 @@ class PokerServer {
         
         // 广播状态
         this.broadcastGameState();
+
+        // 启动首个行动者的计时器
+        const ct = this.game.gameState.currentTurn;
+        if (ct) {
+          this._cancelTurnTimer();
+          this._startTurnTimerFor(ct);
+        }
         return true;
+      } else {
+        console.log('startNewHand返回false，游戏启动失败');
       }
+    } else {
+      console.log('启动游戏条件不满足');
     }
     return false;
+  }
+
+  /**
+   * 阶段2新增：处理握手与会话
+   */
+  handleHello(socket, payload) {
+    const { sessionToken } = payload || {};
+    
+    if (sessionToken) {
+      // 验证现有会话令牌
+      const tokenResult = this.session.verifySessionToken(sessionToken);
+      if (tokenResult.success) {
+        const { sid: sessionId, pid: playerId } = tokenResult.payload;
+        
+        // 检查会话是否仍在宽限期内
+        if (this.session.isWithinGrace(playerId)) {
+          // 重连成功
+          this.session.reconnectPlayer(playerId, socket.id);
+          this.playerRegistry.reconnectPlayer(playerId, socket.id, socket);
+          this.socketToSession.set(socket.id, sessionId);
+          
+          console.log(`玩家 ${playerId} 重连成功`);
+          
+          socket.emit('message', createServerMessage(SERVER_MESSAGES.SESSION_ACCEPTED, {
+            sessionToken,
+            playerId,
+            reconnected: true
+          }));
+          
+          // 发送当前游戏状态
+          this.sendGameStateToPlayer(socket, playerId);
+          return;
+        }
+      }
+    }
+    
+    // 创建新会话
+    const { sessionId } = this.session.ensureSession();
+    const newToken = this.session.createSessionToken(sessionId, null);
+    this.socketToSession.set(socket.id, sessionId);
+    
+    socket.emit('message', createServerMessage(SERVER_MESSAGES.SESSION_ACCEPTED, {
+      sessionToken: newToken,
+      playerId: null,
+      reconnected: false
+    }));
+  }
+
+  /**
+   * 阶段2新增：处理断线（不立即移除玩家）
+   */
+  handlePlayerDisconnect(socketId) {
+    const playerId = this.playerRegistry.getPlayerBySocket(socketId);
+    
+    if (playerId) {
+      // 标记会话断线，开始宽限期
+      this.session.markDisconnected(playerId);
+      this.playerRegistry.markPlayerDisconnected(playerId);
+      
+      console.log(`玩家 ${playerId} 断线，开始宽限期`);
+      
+      // 启动宽限期清理定时器
+      setTimeout(() => {
+        this.cleanupExpiredPlayer(playerId);
+      }, 5 * 60 * 1000);
+
+      // 若当前不在手牌中（局间），立即将其移出桌面
+      const gameState = this.game.gameState;
+      if (gameState && gameState.phase !== 'PLAYING') {
+        this.game.removePlayer(playerId);
+        this.broadcastGameState();
+      }
+    }
+  }
+
+  /**
+   * 阶段2新增：清理过期玩家
+   */
+  cleanupExpiredPlayer(playerId) {
+    if (!this.session.isWithinGrace(playerId)) {
+      console.log(`玩家 ${playerId} 宽限期到期，执行清理`);
+
+      const gameState = this.game.gameState;
+      const isPlaying = gameState && gameState.phase === 'PLAYING';
+      const wasCurrentTurn = isPlaying && gameState.currentTurn === playerId;
+
+      if (isPlaying) {
+        try {
+          if (wasCurrentTurn) {
+            // 优先通过正规动作触发游戏流程推进
+            const result = this.game.applyAction({ type: 'fold', playerId });
+            if (result && result.success && result.gameEvents && result.gameEvents.length > 0) {
+              this.handleGameEvents(result.gameEvents);
+            } else {
+              // 兜底：直接标记弃牌并手动推进到下一行动者
+              const player = gameState.getPlayer(playerId);
+              if (player) {
+                player.status = 'FOLDED';
+                gameState.updateActivePlayers();
+                TurnManager.advanceToNextActor(gameState);
+                this.handleGameEvents([{ type: 'TURN_CHANGED', playerId: gameState.currentTurn }]);
+              }
+            }
+          } else {
+            // 非当前行动者：直接标记弃牌，防止后续卡住
+            const player = gameState.getPlayer(playerId);
+            if (player) {
+              player.status = 'FOLDED';
+              gameState.updateActivePlayers();
+            }
+          }
+        } catch (e) {
+          console.warn(`清理玩家 ${playerId} 时自动弃牌失败:`, e && e.message ? e.message : e);
+        }
+
+        // 广播最新状态
+        this.broadcastGameState();
+      } else {
+        // 非进行中，直接从桌面移除
+        this.game.removePlayer(playerId);
+        this.broadcastGameState();
+      }
+
+      // 最后清理会话与注册信息（触发房主转移等）
+      this.session.unbindPlayer(playerId);
+      this.playerRegistry.unregisterPlayerById(playerId);
+    }
+  }
+
+  /**
+   * 阶段2新增：处理入座
+   */
+  handleTakeSeat(socket, payload) {
+    const playerId = this.getAuthenticatedPlayer(socket);
+    if (!playerId) return;
+    
+    const { buyIn } = payload;
+    const result = this.lifecycle.handleTakeSeat({
+      gameState: this.game.gameState,
+      tableRules: this.game.tableRules,
+      playerId,
+      buyIn
+    });
+    
+    if (result.success) {
+      console.log(`玩家 ${playerId} 入座成功`);
+      this.broadcastGameState();
+    } else {
+      socket.emit('message', createErrorMessage(
+        result.error.code,
+        result.error.message
+      ));
+    }
+  }
+
+  /**
+   * 阶段2新增：处理离座
+   */
+  handleLeaveSeat(socket, payload) {
+    const playerId = this.getAuthenticatedPlayer(socket);
+    if (!playerId) return;
+    
+    const result = this.lifecycle.handleLeaveSeat({
+      gameState: this.game.gameState,
+      playerId
+    });
+    
+    if (result.success) {
+      console.log(`玩家 ${playerId} 离座成功`);
+      this.broadcastGameState();
+    } else {
+      socket.emit('message', createErrorMessage(
+        result.error.code,
+        result.error.message
+      ));
+    }
+  }
+
+  /**
+   * 阶段2新增：处理离开桌面
+   */
+  handleLeaveTable(socket, payload) {
+    const playerId = this.getAuthenticatedPlayer(socket);
+    if (!playerId) return;
+    
+    const result = this.lifecycle.handleLeaveTable({
+      gameState: this.game.gameState,
+      playerId
+    });
+    
+    if (result.success) {
+      console.log(`玩家 ${playerId} 离开桌面，最终筹码: ${result.finalChips}`);
+      this.session.unbindPlayer(playerId);
+      this.playerRegistry.unregisterPlayerById(playerId);
+      this.broadcastGameState();
+    } else {
+      socket.emit('message', createErrorMessage(
+        result.error.code,
+        result.error.message
+      ));
+    }
+  }
+
+  /**
+   * 阶段2新增：处理增购
+   */
+  handleAddOn(socket, payload) {
+    const playerId = this.getAuthenticatedPlayer(socket);
+    if (!playerId) return;
+    
+    const { amount } = payload;
+    const result = this.lifecycle.handleAddOn({
+      gameState: this.game.gameState,
+      tableRules: this.game.tableRules,
+      playerId,
+      amount
+    });
+    
+    if (result.success) {
+      console.log(`玩家 ${playerId} 增购 ${amount}，新总额: ${result.newTotal}`);
+      this.broadcastGameState();
+    } else {
+      socket.emit('message', createErrorMessage(
+        result.error.code,
+        result.error.message
+      ));
+    }
+  }
+
+  /**
+   * 阶段2新增：获取已认证的玩家ID
+   */
+  getAuthenticatedPlayer(socket) {
+    const playerId = this.playerRegistry.getPlayerBySocket(socket.id);
+    if (!playerId) {
+      socket.emit('message', createErrorMessage(
+        ERROR_TYPES.PLAYER_NOT_FOUND,
+        '玩家未找到，请重新连接'
+      ));
+      return null;
+    }
+    return playerId;
+  }
+
+  /**
+   * 启动某玩家的回合计时器（1分钟）
+   * @private
+   */
+  _startTurnTimerFor(playerId) {
+    if (!playerId) return;
+    // 仅在手牌进行中有效
+    if (!this.game || this.game.gameState.phase !== 'PLAYING') return;
+
+    this.turnPlayerId = playerId;
+    this.turnDeadlineAt = Date.now() + this.TURN_TIMEOUT_MS;
+    this.turnTimer = setTimeout(() => this._handleTurnTimeout(playerId), this.TURN_TIMEOUT_MS);
+  }
+
+  /**
+   * 取消当前回合计时器
+   * @private
+   */
+  _cancelTurnTimer() {
+    if (this.turnTimer) {
+      clearTimeout(this.turnTimer);
+      this.turnTimer = null;
+      this.turnPlayerId = null;
+      this.turnDeadlineAt = null;
+    }
+  }
+
+  /**
+   * 回合超时处理：可过则过，否则弃牌
+   * @private
+   */
+  _handleTurnTimeout(expectedPlayerId) {
+    try {
+      // 状态变化保护
+      const gameState = this.game && this.game.gameState;
+      if (!gameState || gameState.phase !== 'PLAYING') return;
+      if (gameState.currentTurn !== expectedPlayerId) return; // 已换人
+
+      const player = gameState.getPlayer(expectedPlayerId);
+      if (!player) return;
+
+      const amountToCall = gameState.amountToCall || 0;
+      const currentBet = player.currentBet || 0;
+      const callCost = Math.max(0, amountToCall - currentBet);
+      const canCheck = callCost === 0;
+
+      const actionType = canCheck ? PLAYER_ACTIONS.CHECK : PLAYER_ACTIONS.FOLD;
+      const result = this.game.applyAction({ type: actionType, playerId: expectedPlayerId });
+
+      if (result && result.success) {
+        if (result.gameEvents && result.gameEvents.length > 0) {
+          this.handleGameEvents(result.gameEvents);
+        }
+        this.broadcastGameState();
+      }
+    } catch (e) {
+      console.warn('回合超时自动处理失败:', e && e.message ? e.message : e);
+    } finally {
+      this._cancelTurnTimer();
+    }
+  }
+
+  /**
+   * 阶段2新增：向特定玩家发送游戏状态
+   */
+  sendGameStateToPlayer(socket, playerId) {
+    // 发送公共状态
+    const publicState = this.game.getPublicState();
+    publicState.roomHostId = this.playerRegistry.getRoomHostId();
+    socket.emit('message', createServerMessage(SERVER_MESSAGES.GAME_STATE, publicState));
+
+    // 发送私有状态
+    const privateState = this.game.getPrivateStateFor(playerId);
+    if (privateState.holeCards) {
+      socket.emit('message', createServerMessage(SERVER_MESSAGES.PRIVATE_STATE, privateState));
+    }
   }
 
   /**
@@ -418,6 +885,10 @@ class PokerServer {
     
     // 添加房主信息
     publicState.roomHostId = this.playerRegistry.getRoomHostId();
+    // 添加断线玩家列表，供前端标识
+    if (typeof this.playerRegistry.getDisconnectedPlayerIds === 'function') {
+      publicState.disconnectedPlayerIds = this.playerRegistry.getDisconnectedPlayerIds();
+    }
     
     const publicMessage = createServerMessage(SERVER_MESSAGES.GAME_STATE, publicState);
 
@@ -454,9 +925,11 @@ class PokerServer {
   }
 }
 
-// 创建并启动服务器  
-const port = process.env.PORT || 3001;
-const server = new PokerServer(port);
-server.start();
+// 仅在作为主模块执行时启动服务器（兼容Windows/相对路径）
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  const port = process.env.PORT || 3001;
+  const server = new PokerServer(port);
+  server.start();
+}
 
 export default PokerServer;

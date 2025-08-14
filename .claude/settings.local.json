@@ -25,10 +25,30 @@
       "Bash(git init:*)",
       "Bash(git remote add:*)",
       "Bash(git add:*)",
-      "Bash(git pull:*)"
+      "Bash(git pull:*)",
+      "Bash(timeout 10 npm start)",
+      "Bash(npm run test:*)",
+      "Bash(timeout 180 npm run test:4players)",
+      "Bash(timeout:*)",
+      "Bash(taskkill:*)",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_snapshot",
+      "mcp__playwright__browser_type",
+      "mcp__playwright__browser_click",
+      "mcp__playwright__browser_wait_for",
+      "mcp__playwright__browser_evaluate",
+      "mcp__playwright__browser_console_messages",
+      "mcp__playwright__browser_tab_new",
+      "mcp__playwright__browser_tab_select",
+      "mcp__playwright__browser_handle_dialog",
+      "mcp__playwright__browser_tab_close",
+      "mcp__playwright__browser_close"
     ],
     "deny": [],
     "ask": [],
-    "defaultMode": "acceptEdits"
+    "defaultMode": "acceptEdits",
+    "additionalDirectories": [
+      "D:\\d D:"
+    ]
   }
 }

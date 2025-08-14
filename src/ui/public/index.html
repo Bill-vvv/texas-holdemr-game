@@ -236,6 +236,55 @@
             margin: 10px 0;
         }
 
+        /* 阶段2新增：生命周期控制样式 */
+        .lifecycle-controls {
+            background: rgba(0,0,0,0.3);
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        .lifecycle-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 15px 0;
+        }
+
+        .lifecycle-info {
+            background: rgba(0,0,0,0.2);
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .session-status {
+            font-size: 14px;
+            color: #ccc;
+        }
+
+        .btn.secondary {
+            background: #666;
+            color: white;
+        }
+
+        .btn.secondary:hover {
+            background: #555;
+        }
+
+        .addon-input {
+            display: inline-block;
+            width: 120px;
+            padding: 8px;
+            margin: 0 10px;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
         @media (max-width: 768px) {
             .game-info {
                 flex-direction: column;
@@ -307,6 +356,56 @@
             <!-- 玩家区域 -->
             <div class="players-table" id="playersTable">
                 <!-- 玩家信息将在这里显示 -->
+            </div>
+
+            <!-- 阶段2新增：生命周期控制面板 -->
+            <div class="lifecycle-controls" id="lifecycleControls" style="display:none;">
+                <h3>💺 席位控制</h3>
+                
+                <!-- 会话状态信息 -->
+                <div class="lifecycle-info">
+                    <div>
+                        <strong>会话状态:</strong>
+                        <span id="sessionStatus" class="session-status">未连接</span>
+                    </div>
+                    <div>
+                        <strong>我的席位:</strong>
+                        <span id="mySeatStatus" class="session-status">未入座</span>
+                    </div>
+                    <div>
+                        <strong>桌面状态:</strong>
+                        <span id="tableStatus" class="session-status">等待中</span>
+                    </div>
+                    <div>
+                        <strong>在线时间:</strong>
+                        <span id="sessionDuration" class="session-status">--:--</span>
+                    </div>
+                </div>
+
+                <!-- 生命周期操作按钮 -->
+                <div class="lifecycle-buttons">
+                    <input type="number" id="seatBuyInInput" class="addon-input" placeholder="买入(800-2000)" min="1" style="width:140px;">
+                    <button onclick="takeSeat()" class="btn" id="takeSeatBtn" style="display:none;">
+                        🪑 取座
+                    </button>
+                    <button onclick="leaveSeat()" class="btn secondary" id="leaveSeatBtn" style="display:none;">
+                        🚪 离座
+                    </button>
+                    <button onclick="leaveTable()" class="btn danger" id="leaveTableBtn" style="display:none;">
+                        🏃 离开桌子
+                    </button>
+                    <div id="addChipsSection" style="display:none;">
+                        <input type="number" id="addChipsAmount" class="addon-input" placeholder="筹码数量" min="100" max="2000">
+                        <button onclick="addChips()" class="btn warning" id="addChipsBtn">
+                            💰 加筹码
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 操作状态提示 -->
+                <div id="lifecycleStatus" style="display:none; margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 6px;">
+                    <span id="lifecycleStatusText">准备就绪</span>
+                </div>
             </div>
 
             <!-- 我的手牌 -->

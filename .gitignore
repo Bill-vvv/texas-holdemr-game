@@ -61,3 +61,6 @@ Thumbs.db
 # Build outputs
 dist/
 build/
+
+# Private workflow guides (for maintainer use only)
+docs/claude-workflow-guide.md

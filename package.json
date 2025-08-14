@@ -1,0 +1,24 @@
+{
+  "name": "texas-holdem-poker",
+  "version": "1.0.0",
+  "description": "Texas Hold'em Poker Game Loop MVP",
+  "main": "src/server/server.js",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "start": "node src/server/server.js",
+    "dev": "node --watch src/server/server.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "pokersolver": "^2.1.4",
+    "socket.io": "^4.7.5"
+  },
+  "keywords": [
+    "poker",
+    "texas-holdem",
+    "websocket"
+  ],
+  "author": "",
+  "license": "MIT"
+}

@@ -24,7 +24,8 @@
       "mcp__playwright__browser_handle_dialog",
       "Bash(git init:*)",
       "Bash(git remote add:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git pull:*)"
     ],
     "deny": [],
     "ask": [],

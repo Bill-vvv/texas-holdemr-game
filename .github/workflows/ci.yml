@@ -1,0 +1,102 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [16.x, 18.x]
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v3
+    
+    - name: 设置 Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+    
+    - name: 安装依赖
+      run: npm ci
+    
+    - name: 运行代码检查
+      run: npm run lint --if-present
+    
+    - name: 运行测试
+      run: npm test
+    
+    - name: 生成测试覆盖率报告
+      run: npm run test:coverage --if-present
+    
+    - name: 上传覆盖率报告
+      uses: codecov/codecov-action@v3
+      if: matrix.node-version == '18.x'
+      with:
+        fail_ci_if_error: false
+
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v3
+    
+    - name: 设置 Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18.x'
+        cache: 'npm'
+    
+    - name: 安装依赖
+      run: npm ci
+    
+    - name: 构建项目
+      run: npm run build --if-present
+    
+    - name: 运行集成测试
+      run: npm run test:integration --if-present
+
+  security:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v3
+    
+    - name: 运行安全审计
+      run: |
+        npm audit --audit-level=moderate
+        # 允许低严重级别的漏洞通过
+    
+    - name: 检查依赖许可证
+      run: npx license-checker --summary --onlyAllow 'MIT;ISC;BSD-2-Clause;BSD-3-Clause;Apache-2.0' --production
+
+  pr-validation:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 检查PR标题格式
+      uses: deepakputhraya/action-pr-title@master
+      with:
+        regex: '^\[FEAT\]|\[FIX\]|\[REFACTOR\]|\[DOCS\]|\[CHORE\]'
+        allowed_prefixes: '[FEAT],[FIX],[REFACTOR],[DOCS],[CHORE]'
+        prefix_case_sensitive: false
+    
+    - name: 检查分支命名
+      run: |
+        BRANCH_NAME="${{ github.head_ref }}"
+        if [[ ! $BRANCH_NAME =~ ^(feat|fix|refactor|docs|chore)/.+ ]]; then
+          echo "分支名称不符合规范: $BRANCH_NAME"
+          echo "请使用格式: feat/feature-name, fix/bug-description 等"
+          exit 1
+        fi

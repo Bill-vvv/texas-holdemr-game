@@ -23,7 +23,7 @@ import Lifecycle from './lifecycle.js';
 import EventLogger from './persistence/EventLogger.js';
 import SnapshotManager from './persistence/SnapshotManager.js';
 import FileStorage from './persistence/storage/FileStorage.js';
-import { SERVER_MESSAGES, validateClientMessage, createServerMessage, createErrorMessage, createGameEventMessage, ERROR_TYPES } from './protocol.js';
+import { SERVER_MESSAGES, validateClientMessage, createServerMessage, createErrorMessage, createGameEventMessage, ERROR_TYPES, GAME_EVENTS } from './protocol.js';
 import { createMessageHandlers } from './messageHandlers.js';
 import { enableDevReload } from './devReload.js';
 import { broadcastGameState, sendGameStateToPlayer } from './handlers/broadcast.js';
@@ -550,6 +550,12 @@ class PokerServer {
     this.playerRegistry.broadcastToAll(
       createServerMessage(SERVER_MESSAGES.GAME_ENDED, finalSettlement)
     );
+    // 追加：作为 game_event 广播会话汇总，供日志/历史面板使用
+    try {
+      this.playerRegistry.broadcastToAll(
+        createGameEventMessage(GAME_EVENTS.GAME_OVER_SUMMARY, finalSettlement)
+      );
+    } catch (_) { /* ignore */ }
 
     // 记录公共事件：GAME_ENDED（不触发快照）
     try {

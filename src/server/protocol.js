@@ -71,7 +71,18 @@ export const GAME_EVENTS = {
   SHOWDOWN_STARTED: 'showdown_started',
   TURN_CHANGED: 'turn_changed',
   POTS_DISTRIBUTED: 'pots_distributed',
-  HAND_FINISHED: 'hand_finished'
+  HAND_FINISHED: 'hand_finished',
+  // 新增：动作为主的事件（用于前端高阶动画）
+  PLAYER_BET: 'player_bet',
+  PLAYER_CALL: 'player_call',
+  PLAYER_RAISE: 'player_raise',
+  PLAYER_CHECK: 'player_check',
+  PLAYER_FOLD: 'player_fold',
+  PLAYER_ALL_IN: 'player_all_in',
+  // 新增：SHOWDOWN 阶段公开所有底牌
+  SHOWDOWN_REVEAL: 'showdown_reveal',
+  // 新增：会话结束汇总（作为 game_event 广播，便于日志/历史面板）
+  GAME_OVER_SUMMARY: 'game_over_summary'
 };
 
 // 错误类型
@@ -221,4 +232,41 @@ export function createGameEventMessage(eventType, eventData = {}) {
     event: eventType,
     ...eventData
   });
+}
+
+/**
+ * 事件类型归一化工具
+ * 将内部事件名（可能为大写常量）映射为协议定义的小写字符串
+ * @param {string} type 事件类型（可能为大写/小写/已是目标值）
+ * @returns {string} 小写事件字符串
+ */
+export function normalizeEventType(type) {
+  if (!type || typeof type !== 'string') return type;
+  // 直接命中已定义的小写值
+  if (Object.values(GAME_EVENTS).includes(type)) return type;
+
+  const upper = String(type).toUpperCase();
+  const map = {
+    'GAME_STARTED': GAME_EVENTS.GAME_STARTED,
+    'GAME_ENDED': GAME_EVENTS.GAME_ENDED,
+    'ROUND_CLOSED': GAME_EVENTS.ROUND_CLOSED,
+    'STREET_ADVANCED': GAME_EVENTS.STREET_ADVANCED,
+    'FLOP_DEALT': GAME_EVENTS.FLOP_DEALT,
+    'TURN_DEALT': GAME_EVENTS.TURN_DEALT,
+    'RIVER_DEALT': GAME_EVENTS.RIVER_DEALT,
+    'SHOWDOWN_STARTED': GAME_EVENTS.SHOWDOWN_STARTED,
+    'TURN_CHANGED': GAME_EVENTS.TURN_CHANGED,
+    'POTS_DISTRIBUTED': GAME_EVENTS.POTS_DISTRIBUTED,
+    'HAND_FINISHED': GAME_EVENTS.HAND_FINISHED,
+    // 动作级事件（若传入大写）
+    'PLAYER_BET': GAME_EVENTS.PLAYER_BET,
+    'PLAYER_CALL': GAME_EVENTS.PLAYER_CALL,
+    'PLAYER_RAISE': GAME_EVENTS.PLAYER_RAISE,
+    'PLAYER_CHECK': GAME_EVENTS.PLAYER_CHECK,
+    'PLAYER_FOLD': GAME_EVENTS.PLAYER_FOLD,
+    'PLAYER_ALL_IN': GAME_EVENTS.PLAYER_ALL_IN,
+    'SHOWDOWN_REVEAL': GAME_EVENTS.SHOWDOWN_REVEAL,
+    'GAME_OVER_SUMMARY': GAME_EVENTS.GAME_OVER_SUMMARY
+  };
+  return map[upper] || type.toLowerCase();
 }

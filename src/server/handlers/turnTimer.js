@@ -7,6 +7,7 @@ export function startTurnTimer(server, playerId) {
 	server.turnPlayerId = playerId;
 	server.turnDeadlineAt = Date.now() + server.TURN_TIMEOUT_MS;
 	server.turnTimer = setTimeout(() => handleTurnTimeout(server, playerId), server.TURN_TIMEOUT_MS);
+	return server.turnDeadlineAt;
 }
 
 export function cancelTurnTimer(server) {

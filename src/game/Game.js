@@ -158,11 +158,83 @@ export default class Game {
         return { success: false, error: validationError };
       }
 
+      // 在应用前记录用于生成动作级事件的快照
+      const playerBefore = this.gameState.getPlayer(action.playerId);
+      const beforeSnapshot = playerBefore ? {
+        currentBet: playerBefore.currentBet || 0,
+        totalBet: playerBefore.totalBet || 0,
+        chips: playerBefore.chips || 0
+      } : { currentBet: 0, totalBet: 0, chips: 0 };
+      const amountToCallBefore = this.gameState.amountToCall || 0;
+
       // 应用动作
       ActionApplier.apply(action, this.gameState, this.tableRules);
 
+      // 生成动作级事件（用于前端高级动画）
+      const playerAfter = this.gameState.getPlayer(action.playerId);
+      const afterSnapshot = playerAfter ? {
+        currentBet: playerAfter.currentBet || 0,
+        totalBet: playerAfter.totalBet || 0,
+        chips: playerAfter.chips || 0
+      } : { currentBet: 0, totalBet: 0, chips: 0 };
+
+      const actionEvents = [];
+      switch (action.type) {
+        case 'check':
+          actionEvents.push({ type: 'PLAYER_CHECK', playerId: action.playerId });
+          break;
+        case 'fold':
+          actionEvents.push({ type: 'PLAYER_FOLD', playerId: action.playerId });
+          break;
+        case 'call': {
+          const callAmount = Math.max(0, afterSnapshot.currentBet - beforeSnapshot.currentBet);
+          actionEvents.push({
+            type: 'PLAYER_CALL',
+            playerId: action.playerId,
+            callAmount,
+            newCurrentBet: afterSnapshot.currentBet,
+            newTotalBet: afterSnapshot.totalBet
+          });
+          break; }
+        case 'bet': {
+          const betAmount = Math.max(0, afterSnapshot.currentBet - beforeSnapshot.currentBet);
+          actionEvents.push({
+            type: 'PLAYER_BET',
+            playerId: action.playerId,
+            amount: betAmount,
+            newCurrentBet: afterSnapshot.currentBet,
+            newTotalBet: afterSnapshot.totalBet
+          });
+          break; }
+        case 'raise': {
+          const raiseTo = action.amount || afterSnapshot.currentBet;
+          const increment = Math.max(0, raiseTo - beforeSnapshot.currentBet);
+          actionEvents.push({
+            type: 'PLAYER_RAISE',
+            playerId: action.playerId,
+            raiseTo,
+            increment,
+            newCurrentBet: afterSnapshot.currentBet,
+            newTotalBet: afterSnapshot.totalBet
+          });
+          break; }
+        case 'all-in': {
+          const amountAllIn = beforeSnapshot.chips; // 应用前的剩余即本次全押额
+          const isCallLike = (beforeSnapshot.currentBet + amountAllIn) <= amountToCallBefore;
+          actionEvents.push({
+            type: 'PLAYER_ALL_IN',
+            playerId: action.playerId,
+            amount: amountAllIn,
+            isCallLike,
+            newCurrentBet: afterSnapshot.currentBet,
+            newTotalBet: afterSnapshot.totalBet
+          });
+          break; }
+      }
+
       // 检查回合状态并推进游戏
-      const gameEvents = this._processGameFlow();
+      const flowEvents = this._processGameFlow();
+      const gameEvents = [...actionEvents, ...flowEvents];
 
       return { 
         success: true, 
@@ -190,10 +262,21 @@ export default class Game {
 
     // 检查回合是否闭合
     if (TurnManager.isRoundClosed(this.gameState)) {
-      events.push({ type: 'ROUND_CLOSED', street: this.gameState.street });
-      
+      // 记录本街各玩家当前下注（用于前端精准归集动画）
+      const betsInStreet = this.gameState.players
+        .filter(p => (p.currentBet || 0) > 0)
+        .map(p => ({ playerId: p.id, amount: p.currentBet }));
+
       // 收集本街下注到彩池
       this.pots = PotManager.collectBetsFromStreet(this.gameState.players, this.pots);
+
+      // 采样收集后的彩池结构（用于前端区分主池/边池）
+      const potsAfterDetailed = PotManager.getPotsDetailed(this.pots);
+
+      // 发出回合闭合事件（带扩展负载）
+      events.push({ type: 'ROUND_CLOSED', street: this.gameState.street, betsInStreet, potsAfterDetailed });
+
+      // 重置街道下注状态
       ActionApplier.resetStreetState(this.gameState, this.tableRules);
 
       // 推进到下一街
@@ -285,6 +368,11 @@ export default class Game {
     // 阶段1.5：如果是摊牌结束，生成摊牌摘要
     if (this.gameState.street === 'SHOWDOWN') {
       this._generateShowdownSummary(distributionResults);
+      // 新增：SHOWDOWN 阶段公开所有底牌供前端展示
+      const reveal = this.gameState.players
+        .filter(p => p.holeCards && p.holeCards.length > 0)
+        .map(p => ({ playerId: p.id, holeCards: [...p.holeCards] }));
+      events.push({ type: 'SHOWDOWN_REVEAL', players: reveal, board: [...this.gameState.communityCards], handNumber: this.gameState.handNumber });
     }
 
     // 移动按钮位

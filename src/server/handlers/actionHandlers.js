@@ -1,6 +1,7 @@
 import { createErrorMessage, createGameEventMessage, ERROR_TYPES } from '../protocol.js';
 import { broadcastGameState } from './broadcast.js';
 import { startTurnTimer, cancelTurnTimer } from './turnTimer.js';
+import { normalizeEventType } from '../protocol.js';
 
 export function handlePlayerAction(server, socket, payload) {
 	const playerId = server.playerRegistry.getPlayerBySocket(socket.id);
@@ -63,22 +64,23 @@ export function handleGameEvents(server, events) {
 			}
 		} catch (_) { /* ignore */ }
 
-		server.playerRegistry.broadcastToAll(
-			createGameEventMessage(event.type, event)
-		);
+		// 事件类型归一化为协议定义（小写）
+		event.type = normalizeEventType(event.type);
 
-		if (event.type === 'TURN_CHANGED') {
+		if (event.type === 'turn_changed') {
 			cancelTurnTimer(server);
 			if (event.playerId) {
 				startTurnTimer(server, event.playerId);
 			}
+			// 注入服务端真实截止时间，供前端对时展示
+			event.deadlineAt = server.turnDeadlineAt;
 		}
 
-		if (event.type === 'HAND_FINISHED' || event.type === 'GAME_ENDED' || event.type === 'SHOWDOWN_STARTED') {
+		if (event.type === 'hand_finished' || event.type === 'game_ended' || event.type === 'showdown_started') {
 			cancelTurnTimer(server);
 		}
 
-		if (event.type === 'HAND_FINISHED' || event.type === 'GAME_ENDED') {
+		if (event.type === 'hand_finished' || event.type === 'game_ended') {
 			const disconnectedIds = server.game.gameState.players
 				.map(p => p.id)
 				.filter(pid => server.playerRegistry.isPlayerDisconnected(pid));
@@ -87,6 +89,11 @@ export function handleGameEvents(server, events) {
 				broadcastGameState(server);
 			}
 		}
+
+		// 广播在处理所有副作用之后进行（确保携带 deadlineAt 等字段）
+		server.playerRegistry.broadcastToAll(
+			createGameEventMessage(event.type, event)
+		);
 	});
 }
 

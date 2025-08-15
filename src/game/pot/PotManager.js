@@ -255,6 +255,20 @@ export default class PotManager {
   }
 
   /**
+   * 获取彩池详细信息（用于精准动画）
+   * @param {Object[]} pots 彩池数组
+   * @returns {Object[]} 详细数组 { id, amount, type, eligiblePlayers }
+   */
+  static getPotsDetailed(pots) {
+    return (pots || []).map(pot => ({
+      id: pot.id,
+      amount: pot.amount,
+      type: pot.type,
+      eligiblePlayers: Array.isArray(pot.eligiblePlayers) ? [...pot.eligiblePlayers] : []
+    }));
+  }
+
+  /**
    * 清空所有彩池（新一轮开始时）
    * @returns {Object[]} - 空彩池数组
    */

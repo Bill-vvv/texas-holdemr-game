@@ -202,4 +202,238 @@ interface Storage {
   - 明确恢复协议：加载快照→重放至最近 `HAND_FINISHED`→丢弃尾部→进入 `WAITING`。
   - 最小侵入接入 `server.js`；`Game` 内核不变；测试与端点覆盖一致性。
 
-- 如需，我可按此文档生成骨架文件与占位调用点清单。
+### 18. Git工作流与提交策略
+
+#### 18.1 分支管理策略
+
+- **功能分支命名规范**：
+  - `phase3-storage-foundation` - 存储基础层 ✅已完成
+  - `phase3-event-logging` - 事件记录器
+  - `phase3-snapshot-manager` - 快照管理器  
+  - `phase3-replay-engine` - 回放引擎
+  - `phase3-server-integration` - 服务端集成
+  - `phase3-complete` - 最终集成分支
+
+- **分支生命周期**：
+  1. 从最新master创建功能分支
+  2. 完成功能开发和测试
+  3. 提交到功能分支并推送
+  4. 合并到master（通过PR或直接merge）
+  5. 删除功能分支
+
+#### 18.2 Commit时机与规范
+
+##### 阶段性Commit指导
+每个开发步骤应当在以下时机进行commit：
+
+1. **存储基础层** ✅已完成 (commit: c27dd16)
+   ```bash
+   # 单个功能完成后立即commit
+   git add .
+   git commit -m "阶段三第一步：实现存储抽象层和文件系统持久化"
+   ```
+
+2. **事件记录器开发**
+   ```bash
+   # EventLogger实现完成后
+   git add src/server/persistence/EventLogger.js
+   git commit -m "实现EventLogger - 公共事件记录器"
+   
+   # PrivateEventLogger实现完成后  
+   git add src/server/persistence/PrivateEventLogger.js
+   git commit -m "实现PrivateEventLogger - 私有事件记录器"
+   
+   # 功能测试完成后
+   git add test/
+   git commit -m "添加EventLogger功能测试和文档"
+   ```
+
+3. **快照管理器开发**
+   ```bash
+   # SnapshotManager实现完成后
+   git add src/server/persistence/SnapshotManager.js
+   git commit -m "实现SnapshotManager - 手局开始快照管理"
+   
+   # 集成测试通过后
+   git commit -m "SnapshotManager集成测试通过"
+   ```
+
+4. **回放引擎开发**
+   ```bash
+   # ScriptedDeck实现完成后
+   git add src/game/replay/ScriptedDeck.js
+   git commit -m "实现ScriptedDeck - 可控发牌回放"
+   
+   # ReplayEngine实现完成后
+   git add src/game/replay/ReplayEngine.js
+   git commit -m "实现ReplayEngine - 双模式回放引擎"
+   
+   # 端到端回放测试通过后
+   git commit -m "回放引擎端到端测试通过"
+   ```
+
+5. **服务端集成**
+   ```bash
+   # server.js最小侵入集成后
+   git add src/server/server.js
+   git commit -m "server.js集成持久化钩子"
+   
+   # 恢复协议实现后
+   git commit -m "实现启动时状态恢复协议"
+   
+   # 完整集成测试后
+   git commit -m "持久化系统服务端集成完成"
+   ```
+
+##### Commit消息规范
+```bash
+# 格式：<类型>: <简短描述>
+#
+# 详细说明：
+# - 功能特点
+# - 技术实现要点  
+# - 验收标准
+#
+# 🤖 Generated with Claude Code
+# Co-Authored-By: Claude <noreply@anthropic.com>
+
+# 示例：
+git commit -m "feat: 实现EventLogger - 公共事件记录器
+
+✅ 完成功能：
+- 支持会话级事件追加记录
+- 自动序号生成和时间戳
+- 错误处理和重试机制
+
+📏 代码质量：
+- 严格遵循<200行限制 (156行)
+- 完整单元测试覆盖
+- 详细文档和使用示例
+
+🤖 Generated with Claude Code
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
+#### 18.3 Push策略
+
+##### 功能分支Push时机
+- **即时推送**：每次commit后立即push到功能分支
+  ```bash
+  git push origin phase3-event-logging
+  ```
+
+- **保护原则**：绝不直接push到master，始终通过功能分支
+  ```bash
+  # ❌ 禁止
+  git push origin master
+  
+  # ✅ 正确
+  git push origin phase3-feature-name
+  ```
+
+##### Master合并条件
+只有满足以下**所有条件**时，才能合并到master：
+
+1. **功能完整性**
+   - [ ] 所有计划功能已实现
+   - [ ] 单元测试100%通过
+   - [ ] 集成测试验证通过
+   - [ ] 文档完整且准确
+
+2. **代码质量**
+   - [ ] 所有文件严格遵循<200行限制
+   - [ ] 代码风格一致，遵循KISS/YAGNI原则
+   - [ ] 无明显的代码异味或技术债务
+   - [ ] 错误处理完善
+
+3. **向后兼容**
+   - [ ] 不破坏现有阶段1.0/1.5功能
+   - [ ] 现有API接口保持不变
+   - [ ] 现有测试仍然通过
+   - [ ] 客户端无需修改
+
+4. **验收测试**
+   - [ ] 端到端游戏流程正常
+   - [ ] 持久化功能工作正常
+   - [ ] 恢复协议验证通过
+   - [ ] 性能无明显退化
+
+##### 最终Push到Master
+```bash
+# 确保功能分支最新
+git checkout phase3-complete
+git pull origin phase3-complete
+
+# 切换到master并合并
+git checkout master  
+git pull origin master
+git merge phase3-complete
+
+# 最终验证后推送
+npm test                    # 运行所有测试
+npm start                   # 确保服务正常启动
+git push origin master
+
+# 清理功能分支
+git branch -d phase3-complete
+git push origin --delete phase3-complete
+```
+
+#### 18.4 阶段性里程碑
+
+| 里程碑 | 分支 | 验收标准 | 预计时间 |
+|--------|------|----------|----------|
+| 存储基础 | phase3-storage-foundation | Storage接口+FileStorage实现+测试 | ✅ 已完成 |
+| 事件记录 | phase3-event-logging | EventLogger+PrivateEventLogger+集成 | 1天 |
+| 快照管理 | phase3-snapshot-manager | SnapshotManager+时机控制+测试 | 0.8天 |
+| 回放引擎 | phase3-replay-engine | ReplayEngine+ScriptedDeck+双模式 | 1.2天 |
+| 服务集成 | phase3-server-integration | server.js集成+恢复协议+端到端 | 1天 |
+| 最终验收 | phase3-complete | 完整功能+文档+测试+性能验证 | 0.5天 |
+
+#### 18.5 风险控制
+
+##### 回滚策略
+```bash
+# 如果功能分支出现问题，立即回滚到安全点
+git reset --hard <last-good-commit>
+git push --force origin feature-branch
+
+# 如果master出现问题，创建hotfix分支修复
+git checkout master
+git checkout -b hotfix-phase3-critical
+# 修复问题后合并回master
+```
+
+##### 备份策略
+- 重要里程碑后创建标签：
+  ```bash
+  git tag v1.5.1-phase3-storage-foundation
+  git push origin v1.5.1-phase3-storage-foundation
+  ```
+
+- 定期备份功能分支：
+  ```bash
+  git checkout phase3-current-work
+  git checkout -b backup/phase3-$(date +%Y%m%d)
+  git push origin backup/phase3-$(date +%Y%m%d)
+  ```
+
+#### 18.6 协作规范
+
+- **代码审查**（如适用）：
+  - 每个功能完成后进行自我审查
+  - 关键功能请其他开发者审查
+  - 重点检查：功能正确性、代码质量、测试覆盖
+
+- **文档同步**：
+  - 代码更改必须同步更新相关CLAUDE.md
+  - 新功能必须包含使用示例
+  - API变更必须更新接口文档
+
+- **测试优先**：
+  - 功能实现前先写测试用例
+  - 每次commit前运行相关测试
+  - 新功能必须包含完整测试覆盖
+
+通过这套完整的Git工作流策略，确保阶段三开发过程的可控性、可追溯性和高质量交付。

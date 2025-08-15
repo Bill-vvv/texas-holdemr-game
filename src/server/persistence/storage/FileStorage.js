@@ -104,4 +104,111 @@ export default class FileStorage extends Storage {
   async *streamPrivateEvents(sessionId, fromSeq = 0) {
     yield* this.streamReader.streamPrivateEvents(sessionId, fromSeq);
   }
+
+  /**
+   * 批量追加公共事件（EventLogger支持）
+   */
+  async appendBatch(sessionId, events) {
+    try {
+      const sessionDir = await this.sessionDirManager.ensureSessionDir(sessionId);
+      const eventsFile = path.join(sessionDir, 'events.ndjson');
+      
+      const content = events.map(event => JSON.stringify(event)).join('\n') + '\n';
+      await FileOperations.safeAppend(eventsFile, content);
+    } catch (error) {
+      throw new Error(`Failed to append batch events: ${error.message}`);
+    }
+  }
+
+  /**
+   * 获取事件总数（EventLogger支持）
+   */
+  async getEventCount(sessionId) {
+    try {
+      const sessionDir = this.sessionDirManager.getSessionDir(sessionId);
+      const eventsFile = path.join(sessionDir, 'events.ndjson');
+      
+      return await this.streamReader.countEvents(eventsFile);
+    } catch (error) {
+      return 0; // 文件不存在时返回0
+    }
+  }
+
+  /**
+   * 更新事件索引（可选功能）
+   */
+  async updateEventIndex(sessionId, handNumber, seq) {
+    if (!process.env.EVENT_INDEX_ENABLED) {
+      return; // 索引功能禁用时跳过
+    }
+
+    try {
+      const sessionDir = await this.sessionDirManager.ensureSessionDir(sessionId);
+      const indexFile = path.join(sessionDir, 'events.idx');
+      
+      // 简单的手号->序号映射，每行格式: handNumber:seq
+      const indexEntry = `${handNumber}:${seq}\n`;
+      await FileOperations.safeAppend(indexFile, indexEntry);
+    } catch (error) {
+      // 索引更新失败不影响主要功能
+      console.warn(`Failed to update event index: ${error.message}`);
+    }
+  }
+
+  /**
+   * 批量更新索引（EventLogger支持）
+   */
+  async batchUpdateEventIndex(sessionId, handNumber, sequences) {
+    if (!process.env.EVENT_INDEX_ENABLED || !sequences.length) {
+      return;
+    }
+
+    try {
+      const sessionDir = await this.sessionDirManager.ensureSessionDir(sessionId);
+      const indexFile = path.join(sessionDir, 'events.idx');
+      
+      const indexEntries = sequences.map(seq => `${handNumber}:${seq}`).join('\n') + '\n';
+      await FileOperations.safeAppend(indexFile, indexEntries);
+    } catch (error) {
+      console.warn(`Failed to batch update event index: ${error.message}`);
+    }
+  }
+
+  /**
+   * 轮转事件日志（可选功能）
+   */
+  async rotateEvents(sessionId, keepLastHands) {
+    // 事件轮转功能的占位实现
+    // 实际实现需要基于索引文件来确定保留范围
+    console.warn(`Event rotation not implemented for session ${sessionId}`);
+  }
+
+  /**
+   * 批量追加私有事件（PrivateEventLogger支持）
+   */
+  async appendPrivateBatch(sessionId, events) {
+    try {
+      const sessionDir = await this.sessionDirManager.ensureSessionDir(sessionId);
+      const privateFile = path.join(sessionDir, 'private.ndjson');
+      
+      const content = events.map(event => JSON.stringify(event)).join('\n') + '\n';
+      await FileOperations.safeAppend(privateFile, content);
+    } catch (error) {
+      throw new Error(`Failed to append private batch events: ${error.message}`);
+    }
+  }
+
+  /**
+   * 获取私有事件总数（PrivateEventLogger支持）
+   */
+  async getPrivateEventCount(sessionId) {
+    try {
+      const sessionDir = this.sessionDirManager.getSessionDir(sessionId);
+      const privateFile = path.join(sessionDir, 'private.ndjson');
+      
+      return await this.streamReader.countEvents(privateFile);
+    } catch (error) {
+      return 0; // 文件不存在时返回0
+    }
+  }
 }

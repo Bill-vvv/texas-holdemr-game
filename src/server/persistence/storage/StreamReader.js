@@ -61,4 +61,34 @@ export default class StreamReader {
       // 文件不存在时返回空迭代器
     }
   }
+
+  /**
+   * 统计事件文件中的事件数量（EventLogger支持）
+   */
+  async countEvents(filePath) {
+    try {
+      const fileStream = createReadStream(filePath, { encoding: 'utf8' });
+      const rl = createInterface({ input: fileStream, crlfDelay: Infinity });
+      
+      let count = 0;
+      for await (const line of rl) {
+        if (line.trim()) {
+          try {
+            JSON.parse(line); // 验证JSON格式
+            count++;
+          } catch (parseError) {
+            // 跳过损坏的行
+            continue;
+          }
+        }
+      }
+      
+      return count;
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        return 0; // 文件不存在时返回0
+      }
+      throw new Error(`Failed to count events in ${filePath}: ${error.message}`);
+    }
+  }
 }

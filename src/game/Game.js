@@ -194,7 +194,7 @@ export default class Game {
       
       // 收集本街下注到彩池
       this.pots = PotManager.collectBetsFromStreet(this.gameState.players, this.pots);
-      ActionApplier.resetStreetState(this.gameState);
+      ActionApplier.resetStreetState(this.gameState, this.tableRules);
 
       // 推进到下一街
       TurnManager.advanceStreet(this.gameState);
@@ -433,65 +433,49 @@ export default class Game {
 
   /**
    * 游戏强制结束时的筹码返还处理
-   * 返还所有currentBet和按比例分配彩池，确保公平结算
+   * 方案A：返还所有currentBet，并将已形成的彩池按贡献等额退回给有资格参与该池的玩家
    * @private
    */
   _refundChipsOnGameEnd() {
-    // 1. 返还所有玩家的currentBet（本街已下注筹码）
+    // 1) 返还所有玩家的当前街下注（未归入彩池的部分）
     this.gameState.players.forEach(player => {
       player.chips += player.currentBet;
       player.currentBet = 0;
     });
 
-    // 2. 计算所有彩池的总金额
-    const totalPotsAmount = this.pots.reduce((sum, pot) => sum + pot.amount, 0);
-    
-    if (totalPotsAmount > 0) {
-      // 3. 按损失比例返还彩池筹码
-      // 计算每个玩家的损失（baseline - current chips）
-      const playerLosses = this.gameState.players.map(player => {
-        const baseline = this.gameState.session.baselineStacks[player.id] || 0;
-        const loss = Math.max(0, baseline - player.chips);
-        return {
-          playerId: player.id,
-          loss: loss
-        };
-      }).filter(p => p.loss > 0);
+    // 2) 将已形成的彩池按贡献者等额退回
+    if (this.pots && this.pots.length > 0) {
+      for (const pot of this.pots) {
+        if (!pot || !pot.amount || pot.amount <= 0) continue;
+        const eligiblePlayers = (pot.eligiblePlayers || [])
+          .map(pid => this.gameState.getPlayer(pid))
+          .filter(Boolean);
+        if (eligiblePlayers.length === 0) continue;
 
-      const totalLoss = playerLosses.reduce((sum, p) => sum + p.loss, 0);
-      
-      if (totalLoss > 0) {
-        // 按损失比例分配彩池筹码
-        playerLosses.forEach(({playerId, loss}) => {
-          const proportion = loss / totalLoss;
-          const refund = Math.floor(totalPotsAmount * proportion);
-          const player = this.gameState.getPlayer(playerId);
-          if (player) {
-            player.chips += refund;
-          }
+        const baseShare = Math.floor(pot.amount / eligiblePlayers.length);
+        const remainder = pot.amount % eligiblePlayers.length;
+
+        // 均分部分
+        eligiblePlayers.forEach(p => {
+          p.chips += baseShare;
         });
 
-        // 处理余数：剩余筹码给损失最大的玩家
-        const refundedAmount = playerLosses.reduce((sum, {playerId, loss}) => {
-          const proportion = loss / totalLoss;
-          return sum + Math.floor(totalPotsAmount * proportion);
-        }, 0);
-        
-        const remainder = totalPotsAmount - refundedAmount;
-        if (remainder > 0 && playerLosses.length > 0) {
-          // 将余数给损失最大的玩家
-          const maxLossPlayer = playerLosses.reduce((max, current) => 
-            current.loss > max.loss ? current : max
+        // 余数按按钮位后顺时针发放
+        if (remainder > 0) {
+          const pseudoWinners = eligiblePlayers.map(p => ({ playerId: p.id, player: p }));
+          const sorted = PotManager._sortWinnersByPosition(
+            pseudoWinners,
+            this.gameState.buttonIndex,
+            this.gameState.players
           );
-          const player = this.gameState.getPlayer(maxLossPlayer.playerId);
-          if (player) {
-            player.chips += remainder;
+          for (let i = 0; i < remainder; i++) {
+            sorted[i].player.chips += 1;
           }
         }
       }
     }
 
-    // 4. 清空彩池，避免重复处理
+    // 3) 清空彩池
     this.pots = [];
   }
 

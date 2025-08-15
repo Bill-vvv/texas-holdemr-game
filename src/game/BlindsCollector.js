@@ -41,6 +41,8 @@ class BlindsCollector {
 
     // 设置当前需要跟注的金额为大盲注
     gameState.amountToCall = rules.bigBlind;
+    // 初始化本街动态最小加注为大盲（规则只读，状态可变）
+    gameState.minRaiseAmount = rules.bigBlind;
     
     // 更新活跃玩家状态
     gameState.updateActivePlayers();

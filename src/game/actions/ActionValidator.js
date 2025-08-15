@@ -153,7 +153,7 @@ export default class ActionValidator {
   static _validateRaise(amount, gameState, player, tableRules) {
     const amountToCall = this._calculateAmountToCall(gameState, player);
     
-    if (amountToCall === 0) {
+    if (gameState.amountToCall === 0) {
       return { 
         error: 'CANNOT_RAISE', 
         message: '无人下注，请使用bet' 

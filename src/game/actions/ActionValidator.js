@@ -269,7 +269,8 @@ export default class ActionValidator {
    * 计算最小加注金额
    */
   static _calculateMinRaise(gameState, tableRules) {
-    // 最小加注 = 上一次加注的增量，或者大盲注
-    return Math.max(tableRules.bigBlind, tableRules.minRaise);
+    // 最小加注 = 上一次加注的增量（累积在gameState中），至少为大盲注
+    const dynamicMinRaise = gameState.minRaiseAmount || 0;
+    return Math.max(tableRules.bigBlind, dynamicMinRaise);
   }
 }

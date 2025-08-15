@@ -6,6 +6,7 @@ game目录包含德州扑克的核心游戏逻辑，包括状态管理、规则�
 ## 子模块索引
 - **[@actions/CLAUDE.md](./actions/CLAUDE.md)** - 动作处理模块（ActionValidator、ActionApplier）
 - **[@pot/CLAUDE.md](./pot/CLAUDE.md)** - 彩池管理模块（PotManager）
+- **[@replay/CLAUDE.md](./replay/CLAUDE.md)** - 回放模块（ReplayEngine、ScriptedDeck）- **阶段三新增**
 - **Game.js** - 游戏聚合根，协调所有模块的主控制器
 
 ---

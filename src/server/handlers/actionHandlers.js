@@ -47,21 +47,19 @@ export function handleGameEvents(server, events) {
 
 	events.forEach(event => {
 		try {
-			if (server.storage && sessionIdForLog && (event.type === 'GAME_STARTED' || event.type === 'HAND_STARTED')) {
-				const snapshot = server.game?.gameState?.serialize ? server.game.gameState.serialize() : server.game?.gameState;
-				if (snapshot) {
-					server.storage.saveSnapshot(sessionIdForLog, snapshot).catch(() => {});
-				}
-			}
-		} catch (_) { /* ignore */ }
-
-		try {
 			if (server.eventLogger && server.eventLogger.enabled && sessionIdForLog) {
 				const handNumber = server.game?.gameState?.handNumber;
 				server.eventLogger.appendPublicEvent(sessionIdForLog, {
 					type: event.type,
 					payload: event
 				}, handNumber).catch(() => {});
+			}
+		} catch (_) { /* ignore */ }
+
+		try {
+			// 在HAND_STARTED事件记录之后保存手局开始快照（公共信息）
+			if (server.snapshotManager && server.snapshotManager.isEnabled() && sessionIdForLog && event.type === 'HAND_STARTED') {
+				server.snapshotManager.saveHandStartSnapshot(sessionIdForLog, server.game.gameState).catch(() => {});
 			}
 		} catch (_) { /* ignore */ }
 

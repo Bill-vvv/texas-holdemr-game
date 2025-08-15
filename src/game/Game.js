@@ -194,7 +194,7 @@ export default class Game {
       
       // 收集本街下注到彩池
       this.pots = PotManager.collectBetsFromStreet(this.gameState.players, this.pots);
-      ActionApplier.resetStreetState(this.gameState);
+      ActionApplier.resetStreetState(this.gameState, this.tableRules);
 
       // 推进到下一街
       TurnManager.advanceStreet(this.gameState);

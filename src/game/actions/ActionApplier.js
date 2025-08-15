@@ -200,22 +200,27 @@ export default class ActionApplier {
    * 获取最小跟注金额
    */
   static _getMinCallAmount(gameState, tableRules) {
-    return Math.max(tableRules.bigBlind, tableRules.minRaise);
+    // 最小跟注不依赖minRaise，直接由amountToCall决定；此处保留与大盲的下限一致性
+    const dynamicMinRaise = gameState.minRaiseAmount || 0;
+    return Math.max(tableRules.bigBlind, dynamicMinRaise);
   }
 
   /**
    * 获取最小加注金额
    */
   static _getMinRaise(gameState, tableRules) {
-    return Math.max(tableRules.bigBlind, tableRules.minRaise);
+    // 动态最小加注来自游戏状态，规则对象保持只读
+    const dynamicMinRaise = gameState.minRaiseAmount || 0;
+    return Math.max(tableRules.bigBlind, dynamicMinRaise);
   }
 
   /**
    * 更新最小加注额
    */
   static _updateMinRaise(gameState, raiseAmount, tableRules) {
-    // 最小加注额为本次加注额或当前最小加注额的较大值
-    tableRules.minRaise = Math.max(raiseAmount, tableRules.minRaise);
+    // 最小加注额为本次加注额或当前动态最小加注额的较大值（写入gameState，不修改规则）
+    const current = gameState.minRaiseAmount || 0;
+    gameState.minRaiseAmount = Math.max(raiseAmount, current);
   }
 
   /**
@@ -231,11 +236,17 @@ export default class ActionApplier {
   /**
    * 重置街道状态（由Game聚合根调用）
    */
-  static resetStreetState(gameState) {
+  static resetStreetState(gameState, tableRules) {
     // 重置回合状态
     gameState.amountToCall = 0;
     gameState.lastAggressorId = null;
     gameState.isActionReopened = true;
+    // 新一街开始时，动态最小加注回到基础大盲（No-Limit规则）
+    if (tableRules && typeof tableRules.bigBlind === 'number') {
+      gameState.minRaiseAmount = tableRules.bigBlind;
+    } else {
+      gameState.minRaiseAmount = 0;
+    }
     
     // 清空动作历史（保留当前街道）
     if (gameState.actionHistory) {

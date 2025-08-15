@@ -12,6 +12,7 @@ import fs from 'fs';
 
 // 游戏模块
 import Game from '../game/Game.js';
+import ReplayEngine from '../game/replay/ReplayEngine.js';
 import TableRules from '../game/rules/TableRules.js';
 
 // 服务器模块
@@ -20,6 +21,7 @@ import Session from './session.js';
 import Lifecycle from './lifecycle.js';
 // 持久化模块（最小侵入式接入）
 import EventLogger from './persistence/EventLogger.js';
+import SnapshotManager from './persistence/SnapshotManager.js';
 import FileStorage from './persistence/storage/FileStorage.js';
 import { SERVER_MESSAGES, validateClientMessage, createServerMessage, createErrorMessage, createGameEventMessage, ERROR_TYPES } from './protocol.js';
 import { createMessageHandlers } from './messageHandlers.js';
@@ -54,9 +56,10 @@ class PokerServer {
     
     // 初始化持久化（启用与否由EventLogger内部环境变量控制）
     try {
-      const storage = new FileStorage();
+      const storage = new FileStorage(process.env.DATA_DIR || './data/sessions');
       this.storage = storage;
       this.eventLogger = new EventLogger(storage);
+      this.snapshotManager = new SnapshotManager(storage);
     } catch (_) {
       this.eventLogger = null;
     }
@@ -71,6 +74,9 @@ class PokerServer {
     if (process.env.NODE_ENV !== 'production') {
       enableDevReload(this.io);
     }
+
+    // 启动时尝试从最近快照恢复（可选）
+    this._attemptStartupRecovery().catch(() => {});
   }
 
   /**
@@ -91,6 +97,67 @@ class PokerServer {
         gamePhase: this.game.getGameSummary().phase,
         timestamp: new Date().toISOString()
       });
+    });
+
+    // 只读 Admin 端点（最小集成）
+    this.app.get('/admin/sessions', async (req, res) => {
+      try {
+        if (!this.storage || typeof this.storage.listSessions !== 'function') return res.json([]);
+        const sessions = await this.storage.listSessions();
+        res.json(sessions || []);
+      } catch (error) {
+        res.status(500).json({ error: 'failed_to_list_sessions', message: error.message });
+      }
+    });
+
+    this.app.get('/admin/sessions/:id/meta', async (req, res) => {
+      try {
+        if (!this.storage || typeof this.storage.readSession !== 'function') return res.status(404).json({ error: 'not_found' });
+        const snapshot = await this.storage.readSession(req.params.id);
+        if (!snapshot) return res.status(404).json({ error: 'not_found' });
+        res.json(snapshot);
+      } catch (error) {
+        res.status(500).json({ error: 'failed_to_read_session', message: error.message });
+      }
+    });
+
+    this.app.get('/admin/sessions/:id/events', async (req, res) => {
+      try {
+        if (!this.storage || typeof this.storage.streamPublicEvents !== 'function') return res.status(404).end();
+        const fromSeq = Number(req.query.fromSeq || 0);
+        res.set('Content-Type', 'application/x-ndjson');
+        for await (const evt of this.storage.streamPublicEvents(req.params.id, fromSeq)) {
+          res.write(JSON.stringify(evt) + '\n');
+        }
+        res.end();
+      } catch (_) {
+        try { res.end(); } catch (__) {}
+      }
+    });
+
+    // 简易回放校验端点（公共/管理员模式）
+    this.app.get('/admin/sessions/:id/replay', async (req, res) => {
+      try {
+        if (!this.storage) return res.status(404).json({ error: 'not_found' });
+        const mode = (req.query.mode === 'admin') ? 'admin' : 'public';
+        const engine = new ReplayEngine(this.storage, Game);
+        const loaded = await engine.loadSession(req.params.id, mode);
+        if (!loaded) return res.status(400).json({ error: 'load_failed' });
+
+        // 回放至最后一个完成手局
+        let lastFinishedIdx = -1;
+        engine.events.forEach((e, idx) => { if (e.type === 'HAND_FINISHED') lastFinishedIdx = idx; });
+        await engine.startReplay({ autoPlay: false });
+        if (lastFinishedIdx >= 0) {
+          await engine.seekTo(lastFinishedIdx + 1);
+        }
+
+        const validation = engine.validateReplay();
+        const state = engine.getCurrentGameState();
+        res.json({ mode: engine.mode, validation, state });
+      } catch (error) {
+        res.status(500).json({ error: 'replay_failed', message: error.message });
+      }
     });
 
     // 创建HTTP服务器
@@ -483,6 +550,25 @@ class PokerServer {
     this.playerRegistry.broadcastToAll(
       createServerMessage(SERVER_MESSAGES.GAME_ENDED, finalSettlement)
     );
+
+    // 记录公共事件：GAME_ENDED（不触发快照）
+    try {
+      if (this.eventLogger && this.eventLogger.enabled) {
+        const currentTurnId = this.game?.gameState?.currentTurn;
+        const sessionIdForLog = currentTurnId
+          ? this.session.playerToSession.get(currentTurnId)
+          : (this.session.playerToSession.size > 0
+            ? Array.from(this.session.playerToSession.values())[0]
+            : null);
+        const handNumber = this.game?.gameState?.handNumber;
+        if (sessionIdForLog) {
+          this.eventLogger.appendPublicEvent(sessionIdForLog, {
+            type: 'GAME_ENDED',
+            payload: finalSettlement
+          }, handNumber).catch(() => {});
+        }
+      }
+    } catch (_) { /* ignore */ }
   }
 
   /**
@@ -509,6 +595,47 @@ class PokerServer {
     this.server.close();
     this.playerRegistry.clear();
     console.log('服务器已停止');
+  }
+
+  /**
+   * 启动时尝试从最近会话快照恢复（若启用持久化）
+   * @private
+   */
+  async _attemptStartupRecovery() {
+    try {
+      if (!this.storage || !this.snapshotManager || !this.snapshotManager.isEnabled()) {
+        return;
+      }
+
+      const sessions = await this.storage.listSessions();
+      if (!sessions || sessions.length === 0) return;
+
+      const latest = sessions[0];
+      const snapshot = await this.snapshotManager.readSnapshot(latest.sessionId);
+      if (!snapshot) return;
+
+      // 使用回放引擎从快照+事件恢复到最近完整手局后的状态
+      const engine = new ReplayEngine(this.storage, Game);
+      const loaded = await engine.loadSession(latest.sessionId, 'public');
+      if (!loaded) return;
+      await engine.startReplay({ autoPlay: true, speed: 10 });
+
+      if (engine.game && engine.game.gameState) {
+        const recovered = JSON.parse(JSON.stringify(engine.game.gameState));
+        Object.assign(this.game.gameState, recovered);
+      } else {
+        // 兜底：仅从快照恢复
+        const ok = this.snapshotManager.restoreFromSnapshot(this.game.gameState, snapshot);
+        if (!ok) return;
+      }
+
+      // 确保进入等待状态
+      this.game.gameState.phase = 'WAITING';
+      this.game.gameState.currentTurn = null;
+      console.log(`[StartupRecovery] 从会话 ${latest.sessionId} 恢复完成`);
+    } catch (error) {
+      console.warn('[StartupRecovery] 恢复失败:', error && error.message ? error.message : error);
+    }
   }
 }
 

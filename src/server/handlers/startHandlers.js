@@ -1,4 +1,4 @@
-import { createErrorMessage, createGameEventMessage, ERROR_TYPES } from '../protocol.js';
+import { createErrorMessage, createGameEventMessage, ERROR_TYPES, GAME_EVENTS } from '../protocol.js';
 
 export function handleStartGame(server, socket) {
   const playerId = server.playerRegistry.getPlayerBySocket(socket.id);
@@ -60,9 +60,15 @@ export function startGame(server) {
     console.log('startNewHand返回:', startResult);
 
     if (startResult) {
+      // 记录HAND_STARTED事件（用于事件日志与快照时机）
+      try {
+        const hn = server.game?.gameState?.handNumber;
+        server.handleGameEvents([{ type: 'HAND_STARTED', handNumber: hn }]);
+      } catch (_) { /* ignore */ }
+
       console.log('新一轮游戏开始！');
       server.playerRegistry.broadcastToAll(
-        createGameEventMessage('GAME_STARTED')
+        createGameEventMessage(GAME_EVENTS.GAME_STARTED)
       );
       server.broadcastGameState();
       const ct = server.game.gameState.currentTurn;

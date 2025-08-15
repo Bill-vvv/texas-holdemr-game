@@ -54,7 +54,8 @@
     "ask": [],
     "defaultMode": "acceptEdits",
     "additionalDirectories": [
-      "D:\\d D:"
+      "D:\\d D:",
+      "D:\\"
     ]
   }
 }

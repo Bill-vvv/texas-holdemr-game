@@ -61,3 +61,17 @@ Thumbs.db
 # Build outputs
 dist/
 build/
+
+# Test files
+test/
+tests/
+*.test.js
+*.spec.js
+
+# Documentation files
+# docs/
+# *.md
+# README*
+
+# Claude configuration
+.claude/

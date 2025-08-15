@@ -19,16 +19,12 @@ import TableRules from '../game/rules/TableRules.js';
 import PlayerRegistry from './playerRegistry.js';
 import Session from './session.js';
 import Lifecycle from './lifecycle.js';
-import {
-  CLIENT_MESSAGES,
-  SERVER_MESSAGES,
-  PLAYER_ACTIONS,
-  validateClientMessage,
-  createServerMessage,
-  createErrorMessage,
-  createGameEventMessage,
-  ERROR_TYPES
-} from './protocol.js';
+// 持久化模块（最小侵入式接入）
+import EventLogger from './persistence/EventLogger.js';
+import FileStorage from './persistence/storage/FileStorage.js';
+import { SERVER_MESSAGES, PLAYER_ACTIONS, validateClientMessage, createServerMessage, createErrorMessage, createGameEventMessage, ERROR_TYPES } from './protocol.js';
+import { createMessageHandlers } from './messageHandlers.js';
+import { enableDevReload } from './devReload.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -51,12 +47,24 @@ class PokerServer {
     const tableRules = TableRules.createCashGame(20); // 10/20 盲注
     this.game = new Game(tableRules);
     
+    // 初始化持久化（启用与否由EventLogger内部环境变量控制）
+    try {
+      const storage = new FileStorage();
+      this.storage = storage;
+      this.eventLogger = new EventLogger(storage);
+    } catch (_) {
+      this.eventLogger = null;
+    }
+
+    // 消息处理器映射外置
+    this.messageHandlers = createMessageHandlers(this);
+
     this.setupServer();
     this.setupSocketHandlers();
 
     // 开发模式：启用前端资源热刷新
     if (process.env.NODE_ENV !== 'production') {
-      this.enableDevReload();
+      enableDevReload(this.io);
     }
   }
 
@@ -115,37 +123,7 @@ class PokerServer {
   /**
    * 开发模式：监听静态资源变化并通知客户端刷新
    */
-  enableDevReload() {
-    try {
-      const publicDir = path.join(__dirname, '../ui/public');
-      let reloadTimer = null;
-
-      const scheduleReload = () => {
-        if (reloadTimer) return;
-        reloadTimer = setTimeout(() => {
-          reloadTimer = null;
-          try {
-            this.io.emit('reload');
-            console.log('检测到前端资源变更，已通知客户端刷新');
-          } catch (e) {
-            // 忽略发送失败
-          }
-        }, 200);
-      };
-
-      // Windows/macOS 支持 recursive 递归监听
-      fs.watch(publicDir, { recursive: true }, (eventType, filename) => {
-        if (!filename) return;
-        // 忽略 sourcemap 等无关文件
-        if (filename.endsWith('.map')) return;
-        scheduleReload();
-      });
-
-      console.log('开发模式：已开启静态目录热刷新监听');
-    } catch (err) {
-      console.warn('启用前端热刷新失败（非致命）：', err && err.message ? err.message : err);
-    }
-  }
+  // dev 热刷新逻辑已外置到 devReload.js
 
   /**
    * 处理客户端消息
@@ -159,58 +137,15 @@ class PokerServer {
         return;
       }
 
-      // 根据消息类型分发处理
-      switch (message.type) {
-        case CLIENT_MESSAGES.HELLO:  // 阶段2新增：握手与会话
-          this.handleHello(socket, message.payload);
-          break;
-
-        case CLIENT_MESSAGES.JOIN_GAME:
-          this.handlePlayerJoin(socket, message.payload);
-          break;
-
-        case CLIENT_MESSAGES.START_GAME:
-          this.handleStartGame(socket);
-          break;
-
-        case CLIENT_MESSAGES.PLAYER_ACTION:
-          this.handlePlayerAction(socket, message.payload);
-          break;
-
-        case CLIENT_MESSAGES.REQUEST_GAME_STATE:
-          this.handleGameStateRequest(socket);
-          break;
-
-        case CLIENT_MESSAGES.LEAVE_GAME:
-          this.handlePlayerLeave(socket.id);
-          break;
-
-        case CLIENT_MESSAGES.HOST_END_GAME:  // 阶段1.5新增
-          this.handleHostEndGame(socket);
-          break;
-
-        // 阶段2新增：生命周期消息
-        case CLIENT_MESSAGES.TAKE_SEAT:
-          this.handleTakeSeat(socket, message.payload);
-          break;
-
-        case CLIENT_MESSAGES.LEAVE_SEAT:
-          this.handleLeaveSeat(socket, message.payload);
-          break;
-
-        case CLIENT_MESSAGES.LEAVE_TABLE:
-          this.handleLeaveTable(socket, message.payload);
-          break;
-
-        case CLIENT_MESSAGES.ADD_ON:
-          this.handleAddOn(socket, message.payload);
-          break;
-
-        default:
-          socket.emit('message', createErrorMessage(
-            ERROR_TYPES.SYSTEM_ERROR, 
-            '未知消息类型'
-          ));
+      // 根据消息类型分发处理（Handler Map）
+      const handler = this.messageHandlers[message.type];
+      if (handler) {
+        handler(socket, message.payload);
+      } else {
+        socket.emit('message', createErrorMessage(
+          ERROR_TYPES.SYSTEM_ERROR,
+          '未知消息类型'
+        ));
       }
     } catch (error) {
       console.error('处理客户端消息时出错:', error);
@@ -316,6 +251,18 @@ class PokerServer {
       amount: payload.amount || 0
     };
 
+    // 持久化：记录玩家动作事件（在应用动作前）
+    try {
+      if (this.eventLogger && this.eventLogger.enabled) {
+        const sessionId = this.socketToSession.get(socket.id);
+        const handNumber = this.game?.gameState?.handNumber;
+        this.eventLogger.appendPublicEvent(sessionId, {
+          type: 'PLAYER_ACTION',
+          payload: { ...payload, playerId }
+        }, handNumber).catch(() => {});
+      }
+    } catch (_) { /* 忽略持久化错误，不影响主流程 */ }
+
     // 应用动作到游戏
     const result = this.game.applyAction(action);
 
@@ -342,7 +289,36 @@ class PokerServer {
    * 处理游戏事件
    */
   handleGameEvents(events) {
+    // 选择一个会话ID用于事件记录：优先当前行动者所属的会话，其次任意已存在会话
+    const currentTurnId = this.game?.gameState?.currentTurn;
+    const sessionIdForLog = currentTurnId
+      ? this.session.playerToSession.get(currentTurnId)
+      : (this.session.playerToSession.size > 0
+          ? Array.from(this.session.playerToSession.values())[0]
+          : null);
+
     events.forEach(event => {
+      // 持久化：在新一手开始时保存快照
+      try {
+        if (this.storage && sessionIdForLog && (event.type === 'GAME_STARTED' || event.type === 'HAND_STARTED')) {
+          const snapshot = this.game?.gameState?.serialize ? this.game.gameState.serialize() : this.game?.gameState;
+          if (snapshot) {
+            this.storage.saveSnapshot(sessionIdForLog, snapshot).catch(() => {});
+          }
+        }
+      } catch (_) { /* 忽略快照保存错误 */ }
+
+      // 持久化：记录公共流程事件
+      try {
+        if (this.eventLogger && this.eventLogger.enabled && sessionIdForLog) {
+          const handNumber = this.game?.gameState?.handNumber;
+          this.eventLogger.appendPublicEvent(sessionIdForLog, {
+            type: event.type,
+            payload: event
+          }, handNumber).catch(() => {});
+        }
+      } catch (_) { /* 忽略持久化错误 */ }
+
       // 广播游戏事件
       this.playerRegistry.broadcastToAll(
         createGameEventMessage(event.type, event)

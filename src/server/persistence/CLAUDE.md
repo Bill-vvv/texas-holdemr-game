@@ -15,6 +15,152 @@ persistence目录包含德州扑克阶段三持久化功能的核心实现，负
 
 ---
 
+# SnapshotManager 模块文档
+
+## 概述
+SnapshotManager负责在手局开始时保存会话快照，作为恢复的检查点。专注于公共信息快照，剔除私有信息，严格控制在200行内。
+
+## 功能特性
+- 手局开始时机触发快照保存
+- 公共信息快照（剔除未揭示底牌）
+- 会话快照格式管理
+- 快照读取和验证
+- 游戏状态恢复
+- 配置开关控制
+
+## 核心API
+
+### 快照保存
+```javascript
+// 在手局开始后保存快照
+const success = await snapshotManager.saveHandStartSnapshot(sessionId, gameState);
+
+// 检查功能是否启用
+const enabled = snapshotManager.isEnabled();
+```
+
+### 快照读取
+```javascript
+// 读取最新会话快照
+const snapshot = await snapshotManager.readSnapshot(sessionId);
+
+// 获取快照元信息
+const metadata = await snapshotManager.getSnapshotMetadata(sessionId);
+
+// 检查快照是否存在
+const exists = await snapshotManager.snapshotExists(sessionId);
+```
+
+### 状态恢复
+```javascript
+// 从快照恢复游戏状态
+const success = snapshotManager.restoreFromSnapshot(gameState, snapshot);
+```
+
+## 快照格式
+```javascript
+{
+  meta: {
+    version: 1,                    // 快照格式版本
+    savedAt: 1730000000000,       // 保存时间戳
+    type: 'hand_start',           // 快照类型
+    handNumber: 14                // 手局编号
+  },
+  session: {
+    id: 'session_xxx',           // 会话ID
+    startedAt: 1729990000000,    // 会话开始时间
+    handsPlayed: 13              // 已玩手数
+  },
+  gameState: {
+    // 公共游戏状态，已剔除holeCards等私密信息
+    gameId: 'game_123',
+    street: 'PRE_FLOP',
+    phase: 'PLAYING',
+    players: [{
+      id: 'player1',
+      name: 'Alice',
+      chips: 1000,
+      status: 'ACTIVE'
+      // 注意：无holeCards字段
+    }],
+    // ... 其他公共状态
+  }
+}
+```
+
+## 私有信息剔除策略
+快照管理器确保敏感信息不被持久化：
+- **holeCards**: 未揭示的底牌被完全移除
+- **临时对象**: 任何临时引用被清理
+- **验证机制**: 自动检测并拒绝包含私有信息的快照
+
+## 触发时机
+- **仅在手局开始后**: HAND_STARTED事件写入events.ndjson后触发
+- **覆盖写入**: 每次保存都覆盖之前的快照
+- **单一检查点**: 每个会话只保留最新的手局开始快照
+
+## 配置控制
+```javascript
+// 环境变量控制
+process.env.PERSIST_ENABLED = 'true';   // 启用持久化（默认false）
+
+// 检查状态
+const snapshotManager = new SnapshotManager(storage);
+if (snapshotManager.isEnabled()) {
+  // 执行快照操作
+}
+```
+
+## 使用示例
+```javascript
+import SnapshotManager from './SnapshotManager.js';
+import FileStorage from './storage/FileStorage.js';
+
+// 初始化
+const storage = new FileStorage('./data/sessions');
+const snapshotManager = new SnapshotManager(storage);
+
+// 手局开始时保存快照
+if (gameEvent.type === 'HAND_STARTED') {
+  const success = await snapshotManager.saveHandStartSnapshot(
+    sessionId, 
+    gameState
+  );
+  if (success) {
+    console.log('快照保存成功');
+  }
+}
+
+// 服务启动时恢复状态
+const snapshot = await snapshotManager.readSnapshot(sessionId);
+if (snapshot) {
+  const restored = snapshotManager.restoreFromSnapshot(gameState, snapshot);
+  if (restored) {
+    console.log('状态恢复成功');
+  }
+}
+```
+
+## 错误处理
+- **输入验证**: 验证sessionId和gameState有效性
+- **格式验证**: 确保快照格式正确性
+- **私有信息检测**: 自动检测并拒绝包含私有信息的快照
+- **存储错误**: 优雅处理存储层异常
+- **恢复失败**: 提供详细的错误信息
+
+## 技术特点
+- **轻量级**: 严格控制在<200行
+- **无状态**: 所有方法无副作用
+- **类型安全**: 完善的参数验证
+- **性能优化**: 最小化内存使用
+- **可测试**: 完整的单元测试覆盖
+
+## 依赖关系
+- **依赖**: Storage（存储抽象）、GameStateSerializer（序列化工具）
+- **被依赖**: 服务端集成钩子
+
+---
+
 # EventLogger 模块文档
 
 ## 概述

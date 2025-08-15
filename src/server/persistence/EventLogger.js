@@ -28,6 +28,7 @@ export default class EventLogger {
     }
 
     try {
+      await this._ensureSequenceInitialized(sessionId);
       // 获取下一个序号
       const seq = this._getNextSequence(sessionId);
       
@@ -70,6 +71,7 @@ export default class EventLogger {
     }
 
     const sequences = [];
+    await this._ensureSequenceInitialized(sessionId);
     const startSeq = this._peekNextSequence(sessionId);
 
     try {
@@ -229,6 +231,27 @@ export default class EventLogger {
       await this.storage.batchUpdateEventIndex(sessionId, handNumber, sequences);
     } catch (error) {
       console.warn(`Failed to batch update index for ${sessionId}:`, error.message);
+    }
+  }
+
+  /**
+   * 确保序号计数器从磁盘最新位置初始化，避免重启后重复序号
+   */
+  async _ensureSequenceInitialized(sessionId) {
+    if (this.sequenceCounters.has(sessionId)) {
+      return;
+    }
+    try {
+      let lastSeq = 0;
+      if (typeof this.storage.getLastPublicSeq === 'function') {
+        lastSeq = await this.storage.getLastPublicSeq(sessionId);
+      } else if (typeof this.storage.getEventCount === 'function') {
+        lastSeq = await this.storage.getEventCount(sessionId);
+      }
+      this.sequenceCounters.set(sessionId, (lastSeq || 0) + 1);
+    } catch (_) {
+      // 出错时从1开始
+      this.sequenceCounters.set(sessionId, 1);
     }
   }
 }

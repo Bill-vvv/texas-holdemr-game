@@ -91,4 +91,35 @@ export default class StreamReader {
       throw new Error(`Failed to count events in ${filePath}: ${error.message}`);
     }
   }
+
+  /**
+   * 获取事件文件中最后一个有效事件的序号
+   * 若文件不存在或无有效事件，返回0
+   */
+  async getLastEventSeq(filePath) {
+    try {
+      const fileStream = createReadStream(filePath, { encoding: 'utf8' });
+      const rl = createInterface({ input: fileStream, crlfDelay: Infinity });
+
+      let lastSeq = 0;
+      for await (const line of rl) {
+        if (!line.trim()) continue;
+        try {
+          const evt = JSON.parse(line);
+          if (typeof evt.seq === 'number') {
+            lastSeq = evt.seq;
+          }
+        } catch (_) {
+          // 跳过损坏行
+          continue;
+        }
+      }
+      return lastSeq;
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        return 0;
+      }
+      throw new Error(`Failed to get last event seq in ${filePath}: ${error.message}`);
+    }
+  }
 }

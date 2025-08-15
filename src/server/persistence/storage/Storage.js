@@ -31,6 +31,15 @@ export default class Storage {
   }
 
   /**
+   * 读取会话信息（与readSnapshot等价，为了与文档接口一致保留）
+   * @param {string} sessionId - 会话ID
+   * @returns {Promise<Object>} 会话数据对象
+   */
+  async readSession(sessionId) {
+    throw new Error('readSession not implemented');
+  }
+
+  /**
    * 追加公共事件到日志
    * @param {string} sessionId - 会话ID
    * @param {Object} event - 事件对象

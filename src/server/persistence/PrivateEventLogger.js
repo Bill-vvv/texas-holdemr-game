@@ -35,6 +35,7 @@ export default class PrivateEventLogger {
     }
 
     try {
+      await this._ensureSequenceInitialized(sessionId);
       // 获取下一个序号
       const seq = this._getNextSequence(sessionId);
       
@@ -130,6 +131,7 @@ export default class PrivateEventLogger {
     }
 
     const sequences = [];
+    await this._ensureSequenceInitialized(sessionId);
     const startSeq = this._peekNextSequence(sessionId);
 
     try {
@@ -252,6 +254,26 @@ export default class PrivateEventLogger {
     // 注意：事件已经包含了正确的序号，直接写入即可
     for (const event of formattedEvents) {
       await this.storage.appendPrivateEvent(sessionId, event);
+    }
+  }
+
+  /**
+   * 确保私有序号计数器从磁盘最新位置初始化
+   */
+  async _ensureSequenceInitialized(sessionId) {
+    if (this.sequenceCounters.has(sessionId)) {
+      return;
+    }
+    try {
+      let lastSeq = 0;
+      if (typeof this.storage.getLastPrivateSeq === 'function') {
+        lastSeq = await this.storage.getLastPrivateSeq(sessionId);
+      } else if (typeof this.storage.getPrivateEventCount === 'function') {
+        lastSeq = await this.storage.getPrivateEventCount(sessionId);
+      }
+      this.sequenceCounters.set(sessionId, (lastSeq || 0) + 1);
+    } catch (_) {
+      this.sequenceCounters.set(sessionId, 1);
     }
   }
 }

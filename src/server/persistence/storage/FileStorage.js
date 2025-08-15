@@ -48,6 +48,13 @@ export default class FileStorage extends Storage {
   }
 
   /**
+   * 为了与文档接口一致，提供readSession别名
+   */
+  async readSession(sessionId) {
+    return await this.readSnapshot(sessionId);
+  }
+
+  /**
    * 追加公共事件
    */
   async appendPublicEvent(sessionId, event) {
@@ -106,6 +113,24 @@ export default class FileStorage extends Storage {
   }
 
   /**
+   * 获取公共事件文件中最后一个有效事件的序号
+   */
+  async getLastPublicSeq(sessionId) {
+    const sessionDir = this.sessionDirManager.getSessionDir(sessionId);
+    const eventsFile = path.join(sessionDir, 'events.ndjson');
+    return await this.streamReader.getLastEventSeq(eventsFile);
+  }
+
+  /**
+   * 获取私有事件文件中最后一个有效事件的序号
+   */
+  async getLastPrivateSeq(sessionId) {
+    const sessionDir = this.sessionDirManager.getSessionDir(sessionId);
+    const privateFile = path.join(sessionDir, 'private.ndjson');
+    return await this.streamReader.getLastEventSeq(privateFile);
+  }
+
+  /**
    * 批量追加公共事件（EventLogger支持）
    */
   async appendBatch(sessionId, events) {
@@ -138,7 +163,7 @@ export default class FileStorage extends Storage {
    * 更新事件索引（可选功能）
    */
   async updateEventIndex(sessionId, handNumber, seq) {
-    if (!process.env.EVENT_INDEX_ENABLED) {
+    if (process.env.EVENT_INDEX_ENABLED !== 'true') {
       return; // 索引功能禁用时跳过
     }
 
@@ -159,7 +184,7 @@ export default class FileStorage extends Storage {
    * 批量更新索引（EventLogger支持）
    */
   async batchUpdateEventIndex(sessionId, handNumber, sequences) {
-    if (!process.env.EVENT_INDEX_ENABLED || !sequences.length) {
+    if (process.env.EVENT_INDEX_ENABLED !== 'true' || !sequences.length) {
       return;
     }
 
